@@ -1,0 +1,17 @@
+name: live gateway smoke test
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: docker build -f gateway/Dockerfile -t vpngate-gateway .
+      - run: sudo mkdir -p /dev/net && if [ ! -c /dev/net/tun ]; then sudo mknod /dev/net/tun c 10 200; fi
+      - run: python -m gateway.live_check
