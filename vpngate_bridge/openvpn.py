@@ -61,7 +61,7 @@ def safe_config(config: str, server_ip: str) -> str:
             base64.b64decode(''.join(lines[1:-1]), validate=True)
         except (binascii.Error, ValueError) as exc:
             raise ValueError('invalid inline PEM') from exc
-    result = ['client', 'dev tun', 'nobind', 'persist-key', 'persist-tun', 'script-security 0',
+    result = ['client', 'dev tun', 'nobind', 'persist-key', 'persist-tun', 'script-security 1',
               'route-nopull', 'redirect-gateway def1', 'proto ' + options['proto'],
               'remote ' + str(ip) + ' ' + options['remote']]
     result += [key + ' ' + options[key] for key in ('cipher', 'data-ciphers', 'auth') if key in options]

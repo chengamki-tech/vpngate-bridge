@@ -13,6 +13,7 @@ class OpenVPNTests(unittest.TestCase):
         cert = '<cert>\n-----BEGIN CERTIFICATE-----\nYWJj\n-----END CERTIFICATE-----\n</cert>\n'
         key = '<key>\n-----BEGIN PRIVATE KEY-----\nYWJj\n-----END PRIVATE KEY-----\n</key>\n'
         self.assertIn('<key>', safe_config('proto udp\nremote x 1194\n' + CA + cert + key, '8.8.8.8'))
+        self.assertIn('script-security 1', result)
         self.assertIn('route-nopull', result)
         self.assertIn('redirect-gateway def1', result)
 
