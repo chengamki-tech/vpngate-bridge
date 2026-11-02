@@ -1,4 +1,5 @@
 """Opt-in CI smoke test using live VPNGate relays and temporary containers."""
+import ipaddress
 import random
 import subprocess
 import tempfile
@@ -14,6 +15,8 @@ def docker(*args, **kwargs):
 
 
 def main():
+    direct = subprocess.run(['curl', '--disable', '-fsS', '--noproxy', '*', '--max-time', '10', 'https://api.ipify.org/'], check=True, capture_output=True, text=True).stdout.strip()
+    direct = ipaddress.ip_address(direct)
     candidates = [c for group in fetch().values() for c in group]
     random.shuffle(candidates)
     attempts = 0
@@ -32,8 +35,19 @@ def main():
                 deadline = time.monotonic() + 16
                 while time.monotonic() < deadline:
                     result = subprocess.run(['curl', '--disable', '-fsS', '--noproxy', '', '--socks5-hostname', address + ':1080', '--max-time', '5', 'https://api.ipify.org/'], capture_output=True, text=True)
-                    if result.returncode == 0 and result.stdout.strip():
-                        print(f'VPNGate tunnel and SOCKS request succeeded after {attempts} attempt(s)')
+                    if result.returncode == 0:
+                        try:
+                            exit_ip = ipaddress.ip_address(result.stdout.strip())
+                        except ValueError:
+                            continue
+                        if not exit_ip.is_global or exit_ip == direct:
+                            raise RuntimeError('SOCKS exit is invalid or equals runner IP')
+                        docker('exec', container, 'pkill', '-9', 'openvpn')
+                        time.sleep(2)
+                        after = subprocess.run(['curl', '--disable', '-fsS', '--noproxy', '', '--socks5-hostname', address + ':1080', '--max-time', '5', 'https://api.ipify.org/'], capture_output=True, text=True)
+                        if after.returncode == 0:
+                            raise RuntimeError('SOCKS remained reachable after OpenVPN stopped')
+                        print(f'VPN tunnel changed exit and stopped SOCKS after VPN termination; attempts: {attempts}')
                         return
                     if docker('inspect', '-f', '{{.State.Running}}', container) != 'true':
                         break
