@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import tempfile
 import threading
 from pathlib import Path
@@ -22,6 +23,15 @@ class GatewayRouter:
         if type(max_connections) is not int or max_connections < 1:
             raise ValueError('positive connection limit required')
         self.host, self.path, self.limit = str(address), Path(manifest_path), max_connections
+        self._sources = {self.host}
+        if not address.is_loopback:
+            try:
+                interfaces = json.loads(subprocess.check_output(['ip', '-j', '-4', 'address', 'show'], text=True, timeout=5))
+                self._sources.update(str(ipaddress.IPv4Address(info['local']))
+                                     for interface in interfaces for info in interface['addr_info']
+                                     if info['family'] == 'inet')
+            except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError):
+                raise ValueError('cannot determine assigned local IPv4 addresses') from None
         self._servers, self._routes, self._ports, self._connections = {}, {}, {}, {}
         self._closed = False
         self._lock = threading.RLock()
@@ -122,8 +132,9 @@ class GatewayRouter:
         try:
             # A private bind alone does not prevent routed LAN access to host addresses.
             peer = writer.get_extra_info('peername')[0]
-            if peer != self.host:
-                logging.warning('private gateway relay rejected source %s (expected %s)', peer, self.host)
+            # Docker MASQUERADE can rewrite same-host traffic to another local NIC address.
+            if peer not in self._sources:
+                logging.warning('private gateway relay rejected nonlocal source %s', peer)
                 return
             if route is None or len(self._connections) >= self.limit:
                 return

@@ -1,5 +1,6 @@
 import json
 import asyncio
+import os
 import socket
 import socketserver
 import tempfile
@@ -7,7 +8,7 @@ import threading
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from vpngate_bridge.pool import ActiveRoute
 from vpngate_bridge.router import GatewayRouter
@@ -27,7 +28,7 @@ class RouterTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.path = Path(self.directory.name) / 'routes.json'
         self.backends = []
-        self.router = GatewayRouter('127.0.0.1', self.path)
+        self.router = GatewayRouter(os.environ.get('VGB_ROUTER_TEST_HOST', '127.0.0.1'), self.path)
 
     def tearDown(self):
         self.router.close()
@@ -71,7 +72,7 @@ class RouterTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.router.publish({'JP': replace(first, socks_port=self.backend(b'b'))})
         for bad in (replace(first, vless_port=30000), replace(first, socks_host='8.8.8.8'),
-                    replace(first, socks_port=country.socks_port)):
+                    replace(first, socks_host=country.socks_host, socks_port=country.socks_port)):
             with self.assertRaises(ValueError):
                 self.router.publish({'JP': bad})
         self.assertEqual(self.path.read_bytes(), before)
@@ -107,3 +108,23 @@ class RouterTests(unittest.TestCase):
             self.assertEqual(existing.recv(100), b'')
         with self.assertRaises(OSError):
             socket.create_connection(endpoint, timeout=2)
+
+    def test_linux_nat_accepts_only_exact_addresses_assigned_to_the_host(self):
+        interfaces = [{'addr_info': [{'family': 'inet', 'local': address} for address in
+                                     ('127.0.0.1', '172.17.0.1', '10.1.0.209')]}]
+        with patch('vpngate_bridge.router.subprocess.check_output', return_value=json.dumps(interfaces)):
+            router = GatewayRouter('172.17.0.1', self.path)
+        try:
+            router._routes['JP'] = ActiveRoute('JP', '8.8.8.8', '8.8.4.4', '172.17.0.2', 1080, 20000, 20001)
+            writer = Mock()
+            writer.get_extra_info.return_value = ('10.1.0.209', 12345)
+            with patch('vpngate_bridge.router.asyncio.open_connection', new_callable=AsyncMock,
+                       side_effect=OSError('backend unavailable')) as connect:
+                asyncio.run(router._relay('JP', Mock(), writer))
+                connect.assert_awaited_once_with('172.17.0.2', 1080)
+                connect.reset_mock()
+                writer.get_extra_info.return_value = ('10.1.0.210', 12345)
+                asyncio.run(router._relay('JP', Mock(), writer))
+                connect.assert_not_awaited()
+        finally:
+            router.close()
