@@ -56,7 +56,10 @@ class DockerGateway:
 
     @contextmanager
     def open(self, candidate):
-        safe_config(candidate.config, candidate.ip)
+        try:
+            safe_config(candidate.config, candidate.ip)
+        except ValueError as exc:
+            raise ProbeError('invalid OpenVPN candidate') from exc
         name = 'vgb-probe-' + uuid.uuid4().hex
         with tempfile.TemporaryDirectory(prefix='vgb-') as directory:
             path = Path(directory) / 'client.ovpn'
