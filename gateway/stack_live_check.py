@@ -5,7 +5,6 @@ import json
 import os
 import random
 import secrets
-import socket
 import subprocess
 import tempfile
 import threading
@@ -14,10 +13,9 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+from contextlib import ExitStack
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from vpngate_bridge.bridge import Client, build_config
-from vpngate_bridge.coordinator import LeaseCoordinator
 from vpngate_bridge.docker_gateway import DockerGateway
 from vpngate_bridge.fetcher import fetch
 from vpngate_bridge.lease import renew
@@ -28,6 +26,7 @@ from vpngate_bridge.ports import PortRegistry
 from vpngate_bridge.probe import ProbeError
 from vpngate_bridge.process import docker_epoch
 from vpngate_bridge.router import GatewayRouter
+from vpngate_bridge.runtime import open_bridge
 from vpngate_bridge.subscription import subscription
 from vpngate_bridge.subscription_http import client_token, subscription_server
 
@@ -107,7 +106,7 @@ def main():
             endpoint = router.countries()[0]
             if exit_ip(endpoint.socks_port, endpoint.socks_host) != route.exit_ip:
                 raise RuntimeError('private router did not preserve the selected gateway exit')
-            check_stack(root, route, panel, identity, direct, pool, router, candidates)
+            check_stack(root, route, panel, direct, pool, router, candidates)
         finally:
             try:
                 pool.close()
@@ -115,20 +114,16 @@ def main():
                 router.close()
 
 
-def check_stack(root, route, panel, identity, direct, pool, router, candidates):
+def check_stack(root, route, panel, direct, pool, router, candidates):
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                     '-keyout', str(root / 'key.pem'), '-out', str(root / 'cert.pem'),
                     '-subj', '/CN=bridge.test', '-addext', 'subjectAltName=DNS:bridge.test', '-days', '1'],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     countries = router.countries()
-    config = build_config(countries,
-                          [Client('stack-ci', identity, secrets.token_urlsafe(32))], '/work/cert.pem', '/work/key.pem')
-    # CI never publishes proxy listeners on a runner's public interface.
-    for inbound in config['inbounds']:
-        inbound['listen'] = '127.0.0.1'
     containers, leases, errors = [], {}, []
     lock, stop = threading.Lock(), threading.Event()
     controller, http, http_thread = None, None, None
+    managed, server = ExitStack(), None
 
     def refresh():
         while not stop.wait(1):
@@ -163,29 +158,14 @@ def check_stack(root, route, panel, identity, direct, pool, router, candidates):
     refresher = threading.Thread(target=refresh, daemon=True)
     refresher.start()
     try:
-        server = start('server', config)
-        epoch = docker_epoch(server)
         ledger = CounterLedger(root / 'meter.sqlite')
-        ledger.begin(epoch, ['stack-ci'])
-        # Only the coordinator may renew the server after the StatsService is ready.
-        with lock:
-            lease_path, run_id = leases['server']
-        candidate_controller = LeaseCoordinator(
-            panel, ledger, str(uuid.uuid4()), {'stack-ci': (identity, 'stack-ci')}, epoch,
-            lambda: docker_epoch(server), '127.0.0.1:10085', os.environ['STATS_PROTO'], lease_path, run_id)
-        for attempt in range(40):
-            try:
-                with socket.create_connection(('127.0.0.1', 10085), timeout=.2):
-                    break
-            except OSError:
-                if attempt == 39:
-                    raise RuntimeError('bridge StatsService did not become ready') from None
-                time.sleep(.1)
-        with lock:
-            del leases['server']
-        eligible = candidate_controller.tick()
-        controller = candidate_controller
         secret = secrets.token_bytes(32)
+        runtime = managed.enter_context(open_bridge(
+            panel, ledger, str(uuid.uuid4()), countries, secret, root / 'cert.pem', root / 'key.pem',
+            root, os.environ['STATS_PROTO'], listen='127.0.0.1'))
+        server, config, controller = runtime.container_id, runtime.config, runtime.coordinator
+        epoch = docker_epoch(server)
+        eligible = controller.tick()
         http = subscription_server(0, secret, controller.tick,
                                    lambda name: subscription(config, name, 'bridge.test'))
         http_thread = threading.Thread(target=http.serve_forever, daemon=True)
@@ -278,6 +258,9 @@ def check_stack(root, route, panel, identity, direct, pool, router, candidates):
             http.shutdown()
             http_thread.join()
             http.server_close()
+        if server is not None:
+            subprocess.run(['docker', 'logs', '--tail', '4', server])
+        managed.close()
         for container in reversed(containers):
             subprocess.run(['docker', 'logs', '--tail', '4', container])
             subprocess.run(['docker', 'rm', '-f', container], stdout=subprocess.DEVNULL)

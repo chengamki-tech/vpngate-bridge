@@ -27,9 +27,9 @@ def _docker(*args, timeout=20):
         raise GatewayError('Docker command failed: ' + args[0]) from exc
 
 
-def _remove_owned(name):
+def _remove_owned(name, label='org.vpngate-bridge.probe'):
     try:
-        owner = _docker('inspect', '--format', '{{index .Config.Labels "org.vpngate-bridge.probe"}}', name)
+        owner = _docker('inspect', '--format', '{{index .Config.Labels "' + label + '"}}', name)
     except GatewayError as exc:
         cause = exc.__cause__
         if isinstance(cause, subprocess.CalledProcessError) and ('No such object' in cause.stderr or 'No such container' in cause.stderr):
