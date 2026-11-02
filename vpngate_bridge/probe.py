@@ -29,8 +29,6 @@ def _curl(proxy, url, output, format_string):
 def probe(candidate, proxy, api_key):
     if not re.fullmatch(r'[A-Za-z0-9.-]+:[0-9]{1,5}', proxy) or not 1 <= int(proxy.rsplit(':', 1)[1]) <= 65535:
         raise ValueError('invalid SOCKS address')
-    if not api_key:
-        raise ValueError('ipapi.is API key required')
     ips, latencies = [], []
     for _ in range(3):
         try:
@@ -47,15 +45,25 @@ def probe(candidate, proxy, api_key):
             raise ProbeError('invalid exit probe response') from exc
     if len(set(ips)) != 1:
         raise ProbeError('exit IP changed during probe')
-    query = urllib.parse.urlencode({'q': ips[0], 'key': api_key})
+    if api_key:
+        query = urllib.parse.urlencode({'q': ips[0], 'key': api_key})
+        url = 'https://api.ipapi.is/?' + query
+    else:
+        url = 'https://ipsnapshot.com/api/ip/' + ips[0]
     try:
-        with urllib.request.urlopen('https://api.ipapi.is/?' + query, timeout=10) as response:
+        with urllib.request.urlopen(url, timeout=10) as response:
             payload = response.read(65537)
         if len(payload) > 65536:
             raise ValueError('classification response too large')
         data = json.loads(payload)
-        country = data['location']['country_code']
-        hosting = data['is_datacenter']
+        if api_key:
+            country = data['location']['country_code']
+            hosting = data['is_datacenter']
+        else:
+            if data['success'] is not True:
+                raise ValueError('classification unavailable')
+            country = data['data']['country_code']
+            hosting = data['data']['is_datacenter']
         if data['ip'] != ips[0] or type(hosting) is not bool or not isinstance(country, str):
             raise ValueError('incomplete classification')
     except (OSError, ValueError, TypeError, KeyError) as exc:

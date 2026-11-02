@@ -27,6 +27,17 @@ class ProbeTests(unittest.TestCase):
         self.assertIn('--socks5-hostname', run.call_args_list[0].args[0])
         self.assertNotIn('private-key', str(run.call_args_list))
 
+    def test_free_provider_requires_complete_matching_response(self):
+        candidate = SimpleNamespace(country='JP', uptime_ms=1)
+        meta = {'success': True, 'ip': '8.8.8.8', 'data': {'country_code': 'JP', 'is_datacenter': False}}
+        outputs = [SimpleNamespace(stdout=x) for x in [b'8.8.8.8\n0.1'] * 3 + [b'1000']]
+        with patch('vpngate_bridge.probe.subprocess.run', side_effect=outputs), patch('vpngate_bridge.probe.urllib.request.urlopen', return_value=Response(meta)) as request:
+            self.assertEqual(probe(candidate, 'gateway:1080', None).exit_ip, '8.8.8.8')
+            self.assertIn('ipsnapshot.com', request.call_args.args[0])
+        meta['data'].pop('is_datacenter')
+        with patch('vpngate_bridge.probe.subprocess.run', side_effect=[SimpleNamespace(stdout=b'8.8.8.8\n0.1') for _ in range(3)]), patch('vpngate_bridge.probe.urllib.request.urlopen', return_value=Response(meta)):
+            with self.assertRaises(ProbeError): probe(candidate, 'gateway:1080', None)
+
     def test_rejects_inconsistent_exit_missing_classification_and_timeout(self):
         candidate = SimpleNamespace(country='JP', uptime_ms=1)
         for outputs, metadata in [([b'8.8.8.8\n0.1', b'1.1.1.1\n0.1', b'8.8.8.8\n0.1'], None), ([b'8.8.8.8\n0.1'] * 3, {'ip': '8.8.8.8', 'location': {'country_code': 'JP'}})]:

@@ -6,7 +6,7 @@ import time
 
 from vpngate_bridge.docker_gateway import DockerGateway
 from vpngate_bridge.fetcher import fetch
-from vpngate_bridge.probe import ProbeError
+from vpngate_bridge.probe import ProbeError, probe
 
 
 def curl(*args):
@@ -32,6 +32,10 @@ def main():
                 exit_ip = ipaddress.ip_address(result.stdout.strip())
                 if not exit_ip.is_global or exit_ip == direct:
                     raise RuntimeError('SOCKS exit is invalid or equals runner IP')
+                measured = probe(candidate, address, None)
+                if ipaddress.ip_address(measured.exit_ip) != exit_ip:
+                    raise ProbeError('exit changed between checks')
+                print(f'qualified country {measured.country}; score probes and classification passed', flush=True)
                 names = subprocess.check_output(['docker', 'ps', '--filter', 'label=org.vpngate-bridge.probe', '--format', '{{.Names}}'], text=True).splitlines()
                 if len(names) != 1:
                     raise RuntimeError('unexpected number of probe containers')
