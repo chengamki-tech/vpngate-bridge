@@ -29,12 +29,12 @@ class ProbeTests(unittest.TestCase):
 
     def test_free_provider_requires_complete_matching_response(self):
         candidate = SimpleNamespace(country='JP', uptime_ms=1)
-        meta = {'success': True, 'ip': '8.8.8.8', 'data': {'country_code': 'JP', 'is_datacenter': False}}
+        meta = {'ip': '8.8.8.8', 'country_code': 'JP', 'is_hosting': False}
         outputs = [SimpleNamespace(stdout=x) for x in [b'8.8.8.8\n0.1'] * 3 + [b'1000']]
         with patch('vpngate_bridge.probe.subprocess.run', side_effect=outputs), patch('vpngate_bridge.probe.urllib.request.urlopen', return_value=Response(meta)) as request:
             self.assertEqual(probe(candidate, 'gateway:1080', None).exit_ip, '8.8.8.8')
-            self.assertIn('ipsnapshot.com', request.call_args.args[0])
-        meta['data'].pop('is_datacenter')
+            self.assertIn('whatsmyip.now', request.call_args.args[0])
+        meta.pop('is_hosting')
         with patch('vpngate_bridge.probe.subprocess.run', side_effect=[SimpleNamespace(stdout=b'8.8.8.8\n0.1') for _ in range(3)]), patch('vpngate_bridge.probe.urllib.request.urlopen', return_value=Response(meta)):
             with self.assertRaises(ProbeError): probe(candidate, 'gateway:1080', None)
 

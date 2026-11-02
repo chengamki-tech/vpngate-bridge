@@ -50,7 +50,7 @@ def probe(candidate, proxy, api_key):
         query = urllib.parse.urlencode({'q': ips[0], 'key': api_key})
         url = 'https://api.ipapi.is/?' + query
     else:
-        url = 'https://ipsnapshot.com/api/ip/' + ips[0]
+        url = 'https://whatsmyip.now/api/v1/lookup/' + ips[0]
     try:
         with urllib.request.urlopen(url, timeout=10) as response:
             payload = response.read(65537)
@@ -61,10 +61,10 @@ def probe(candidate, proxy, api_key):
             country = data['location']['country_code']
             hosting = data['is_datacenter']
         else:
-            if data['success'] is not True:
+            if data.get('error'):
                 raise ValueError('classification unavailable')
-            country = data['data']['country_code']
-            hosting = data['data']['is_datacenter']
+            country = data['country_code']
+            hosting = data['is_hosting']
         if data['ip'] != ips[0] or type(hosting) is not bool or not isinstance(country, str):
             raise ValueError('incomplete classification')
     except urllib.error.HTTPError as exc:
