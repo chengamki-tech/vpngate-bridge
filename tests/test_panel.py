@@ -17,7 +17,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
     def do_POST(self):
         Handler.calls.append((self.path, json.loads(self.rfile.read(int(self.headers['Content-Length'])))))
-        if self.headers.get('X-CSRF-Token') != 'csrf-test' or self.headers.get('Cookie') != 'session=preauth':
+        expected_cookie = 'session=preauth' if self.path == '/prefix/login' else 'session=abc'
+        if self.headers.get('X-CSRF-Token') != 'csrf-test' or self.headers.get('Cookie') != expected_cookie:
             self.reply({'success': False}, 403)
         else:
             self.reply({'success': True}, headers=[('Set-Cookie', 'session=abc; Path=/prefix/')])
@@ -67,3 +68,14 @@ class PanelTests(unittest.TestCase):
     def test_reject_insecure_remote_url_and_unauthenticated_requests(self):
         with self.assertRaises(ValueError): Panel('http://example.com', 'u', 'p')
         with self.assertRaises(PanelError): self.panel().clients()
+
+    def test_pushes_absolute_totals_without_adding_panel_counters(self):
+        panel = self.panel()
+        panel.login()
+        source = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        panel.push_global_totals(source, {'alice@example.com': (123, 456)})
+        panel.push_global_totals(source, {'alice@example.com': (123, 456)})
+        self.assertEqual(Handler.calls[-1], Handler.calls[-2])
+        self.assertEqual(Handler.calls[-1][1], {'masterGuid': source, 'traffics': [{'email': 'alice@example.com', 'up': 123, 'down': 456}]})
+        with self.assertRaises(ValueError): panel.push_global_totals(source, {'alice@example.com': (-1, 0)})
+        with self.assertRaises(ValueError): panel.push_global_totals('invalid', {'alice@example.com': (1, 2)})

@@ -110,6 +110,25 @@ class Panel:
             raise PanelError('panel login did not provide a session cookie')
         self._logged_in = True
 
+    def push_global_totals(self, source_guid, totals):
+        """Push absolute aggregate totals; these overlay rather than add to Xray usage."""
+        if not self._logged_in:
+            raise PanelError('panel login required')
+        try:
+            source = str(uuid.UUID(source_guid))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError('invalid traffic source GUID') from exc
+        if not isinstance(totals, dict) or not totals:
+            raise ValueError('nonempty traffic totals required')
+        rows = []
+        for email, values in totals.items():
+            if (not isinstance(email, str) or not email or len(email) > 128 or any(ord(ch) < 33 for ch in email)
+                    or not isinstance(values, (tuple, list)) or len(values) != 2
+                    or any(type(n) is not int or not 0 <= n <= 2**63 - 1 for n in values)):
+                raise ValueError('invalid traffic total')
+            rows.append({'email': email, 'up': values[0], 'down': values[1]})
+        self._request('panel/api/inbounds/pushClientTraffics', {'masterGuid': source, 'traffics': rows})
+
     def clients(self):
         if not self._logged_in:
             raise PanelError('panel login required')

@@ -29,7 +29,13 @@ def main():
     assert len(clients) == 1 and clients[0].email == 'ci@example.com'
     assert clients[0].authorized(now_ms=int(time.time() * 1000), unreported_bridge_bytes=0)
     assert not clients[0].authorized(now_ms=int(time.time() * 1000), unreported_bridge_bytes=None)
-    print('real 3x-ui login, client list, and fail-closed usage check passed')
+    source = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    panel.push_global_totals(source, {'ci@example.com': (123, 456)})
+    panel.push_global_totals(source, {'ci@example.com': (123, 456)})
+    assert panel.clients()[0].panel_bytes == 579, 'traffic overlay missing or counted twice'
+    panel.push_global_totals(source, {'ci@example.com': (600, 600)})
+    assert not panel.clients()[0].authorized(now_ms=int(time.time() * 1000), unreported_bridge_bytes=0)
+    print('real 3x-ui login, client state, idempotent traffic overlay and quota check passed')
 
 
 if __name__ == '__main__':
