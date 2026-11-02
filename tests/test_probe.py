@@ -33,7 +33,8 @@ class ProbeTests(unittest.TestCase):
         outputs = [SimpleNamespace(stdout=x) for x in [b'8.8.8.8\n0.1'] * 3 + [b'1000']]
         with patch('vpngate_bridge.probe.subprocess.run', side_effect=outputs), patch('vpngate_bridge.probe.urllib.request.urlopen', return_value=Response(meta)) as request:
             self.assertEqual(probe(candidate, 'gateway:1080', None).exit_ip, '8.8.8.8')
-            self.assertIn('whatsmyip.now', request.call_args.args[0])
+            self.assertIn('whatsmyip.now', request.call_args.args[0].full_url)
+            self.assertEqual(request.call_args.args[0].get_header('User-agent'), 'vpngate-bridge/0.1')
         meta.pop('is_hosting')
         with patch('vpngate_bridge.probe.subprocess.run', side_effect=[SimpleNamespace(stdout=b'8.8.8.8\n0.1') for _ in range(3)]), patch('vpngate_bridge.probe.urllib.request.urlopen', return_value=Response(meta)):
             with self.assertRaises(ProbeError): probe(candidate, 'gateway:1080', None)

@@ -52,7 +52,8 @@ def probe(candidate, proxy, api_key):
     else:
         url = 'https://whatsmyip.now/api/v1/lookup/' + ips[0]
     try:
-        with urllib.request.urlopen(url, timeout=10) as response:
+        request = urllib.request.Request(url, headers={'User-Agent': 'vpngate-bridge/0.1'})
+        with urllib.request.urlopen(request, timeout=10) as response:
             payload = response.read(65537)
         if len(payload) > 65536:
             raise ValueError('classification response too large')
