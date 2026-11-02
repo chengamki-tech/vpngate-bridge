@@ -7,6 +7,7 @@ import threading
 import unittest
 import urllib.request
 from contextlib import ExitStack, contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -16,6 +17,7 @@ from vpngate_bridge.fetcher import Candidate
 from vpngate_bridge.meter import MeterError
 from vpngate_bridge.panel import PanelClient
 from vpngate_bridge.selection import Measurement
+from vpngate_bridge.probe import ProbeError
 from vpngate_bridge.service import parser, serve
 
 
@@ -45,7 +47,7 @@ class ServiceTests(unittest.TestCase):
         self.router = self.stack.enter_context(patch('vpngate_bridge.service.GatewayRouter')).return_value
         self.router.countries.return_value = [Country('JP', '172.18.0.1', 31080, 20000, 20001)]
         self.stack.enter_context(patch('vpngate_bridge.service.fetch', return_value={'JP': [self.candidate]}))
-        self.scan = self.stack.enter_context(patch('vpngate_bridge.service.scan', return_value={'JP': (self.candidate, self.measurement)}))
+        self.scan = self.stack.enter_context(patch('vpngate_bridge.service.scan_ranked', return_value=[(self.candidate, self.measurement)]))
         self.stack.enter_context(patch('vpngate_bridge.pool.probe', return_value=self.measurement))
         self.runtime = self.stack.enter_context(patch('vpngate_bridge.service.open_bridge', side_effect=self.bridge_context))
         self.healer = self.stack.enter_context(patch('vpngate_bridge.service.Healer')).return_value
@@ -101,11 +103,11 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.router.close.call_count, 2)
 
     def test_no_qualified_country_and_accounting_failure_never_leave_ready_access(self):
-        self.scan.return_value = {}
+        self.scan.return_value = []
         with self.assertRaisesRegex(RuntimeError, 'no qualified'):
             serve(self.args, threading.Event())
         self.runtime.assert_not_called()
-        self.scan.return_value = {'JP': (self.candidate, self.measurement)}
+        self.scan.return_value = [(self.candidate, self.measurement)]
         self.controller.tick.side_effect = MeterError('uncertain ledger')
         with self.assertRaises(MeterError):
             serve(self.args, threading.Event())
@@ -131,3 +133,20 @@ class ServiceTests(unittest.TestCase):
         self.runtime.assert_not_called()
         self.router.publish.assert_any_call({})
         self.router.close.assert_called_once()
+
+        stop = threading.Event()
+        good = replace(self.candidate, ip='1.1.1.1')
+        self.scan.return_value = [(self.candidate, self.measurement),
+                                  (replace(self.candidate, ip='8.8.8.9'), self.measurement),
+                                  (good, replace(self.measurement, exit_ip='1.0.0.1'))]
+        def finish():
+            if (self.state / 'access.json').exists():
+                stop.set()
+            return [self.client]
+        self.controller.tick.side_effect = finish
+        with patch('vpngate_bridge.pool.probe', side_effect=[ProbeError('stale winner'),
+                                                            replace(self.measurement, exit_ip='1.0.0.1')]) as probe:
+            serve(self.args, stop)
+            self.assertEqual(probe.call_count, 2, 'blacklisted neighbors must not be probed again')
+        self.runtime.assert_called_once()
+        self.assertEqual(self.router.close.call_count, 2)

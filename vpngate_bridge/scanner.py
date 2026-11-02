@@ -10,6 +10,16 @@ from .selection import choose, score
 def scan(grouped, gateways, api_key, blocked, max_countries, *, exclude_exits=(), blacklist=None, now=None, stop_event=None):
     if type(max_countries) is not int or max_countries < 1:
         raise ValueError('max_countries must be positive')
+    ranked = scan_ranked(grouped, gateways, api_key, blocked, exclude_exits=exclude_exits,
+                         blacklist=blacklist, now=now, stop_event=stop_event)
+    sources = {id(result): candidate for candidate, result in ranked}
+    winners = choose([result for _, result in ranked], ())
+    ordered = sorted(winners.items(), key=lambda item: (-score(item[1]), item[0]))[:max_countries]
+    return {country: (sources[id(result)], result) for country, result in ordered}
+
+
+def scan_ranked(grouped, gateways, api_key, blocked, *, exclude_exits=(), blacklist=None, now=None, stop_event=None):
+    """Keep qualified runners-up so a stale scan winner does not abort activation."""
     if now is None:
         now = time.time()
     blocked = set(blocked)
@@ -30,7 +40,7 @@ def scan(grouped, gateways, api_key, blocked, max_countries, *, exclude_exits=()
     for country, candidates in sorted(grouped.items()):
         for candidate in candidates:
             if stop_event is not None and stop_event.is_set():
-                return {}
+                return []
             if candidate.country != country:
                 raise ValueError('candidate country does not match group')
             address = ipaddress.ip_address(candidate.ip)
@@ -40,6 +50,8 @@ def scan(grouped, gateways, api_key, blocked, max_countries, *, exclude_exits=()
                 with gateways.open(candidate) as proxy:
                     result = probe(candidate, proxy, api_key)
             except ProbeError as exc:
+                if stop_event is not None and stop_event.is_set():
+                    return []
                 logging.info('candidate in %s rejected: %s', country, exc)
                 if not isinstance(exc, ClassificationError):
                     reject(candidate)
@@ -52,10 +64,10 @@ def scan(grouped, gateways, api_key, blocked, max_countries, *, exclude_exits=()
             results.append(result)
             sources[id(result)] = candidate
     if stop_event is not None and stop_event.is_set():
-        return {}
+        return []
     # A later failure invalidates earlier results from the same relay subnet too.
     results = [result for result in results
-               if not any(ipaddress.ip_address(sources[id(result)].ip) in network for network in networks)]
-    winners = choose(results, blocked)
-    ordered = sorted(winners.items(), key=lambda item: (-score(item[1]), item[0]))[:max_countries]
-    return {country: (sources[id(result)], result) for country, result in ordered}
+               if not any(ipaddress.ip_address(address) in network for network in networks
+                          for address in (sources[id(result)].ip, result.exit_ip))]
+    results.sort(key=lambda result: (-score(result), result.expected_country, result.exit_ip))
+    return [(sources[id(result)], result) for result in results]

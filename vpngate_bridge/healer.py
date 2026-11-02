@@ -56,7 +56,10 @@ class Healer:
             now = time.time()
         with self._lock:
             for route in self.pool.routes().values():
-                self._observe(route, self.check(route))
+                healthy = self.check(route)
+                if self._stop_event is not None and self._stop_event.is_set():
+                    return
+                self._observe(route, healthy)
             candidates = None
             for country, server, exit_ip in self._pending():
                 current = self.pool.routes().get(country)

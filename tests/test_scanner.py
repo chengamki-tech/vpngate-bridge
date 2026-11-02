@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 from vpngate_bridge.fetcher import Candidate
 from vpngate_bridge.probe import ClassificationError, ProbeError
-from vpngate_bridge.scanner import scan
+from vpngate_bridge.scanner import scan, scan_ranked
 from vpngate_bridge.selection import Blacklist, Measurement
 
 
@@ -29,6 +29,9 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(selected['JP'][0], candidates[0])
         self.assertNotIn('US', selected)
         self.assertEqual(len(gateway.closed), 3)
+        with patch('vpngate_bridge.scanner.probe', side_effect=results):
+            ranked = scan_ranked({'JP': candidates[:2], 'US': candidates[2:]}, Gateway(), 'key', ())
+        self.assertEqual([candidate.ip for candidate, _ in ranked], ['8.8.8.8', '9.9.9.9', '1.1.1.1'])
 
     def test_failure_is_not_advertised_and_gateway_is_closed(self):
         gateway = Gateway()
@@ -74,4 +77,11 @@ class ScannerTests(unittest.TestCase):
             with patch('vpngate_bridge.scanner.probe', side_effect=GatewayError('docker failed')):
                 with self.assertRaises(GatewayError):
                     scan({'JP': [candidate]}, Gateway(), None, (), 1, blacklist=blacklist, now=100)
+            stop = threading.Event()
+            def canceled_probe(*args):
+                stop.set()
+                raise ProbeError('process stopped')
+            with patch('vpngate_bridge.scanner.probe', side_effect=canceled_probe):
+                self.assertEqual(scan({'JP': [candidate]}, Gateway(), None, (), 1,
+                                      blacklist=blacklist, now=100, stop_event=stop), {})
             self.assertEqual(blacklist.active(100), [])

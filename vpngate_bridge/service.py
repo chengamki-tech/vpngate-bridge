@@ -29,7 +29,7 @@ from .probe import ClassificationError, ProbeError
 from .coordinator import AccessRevoked
 from .router import GatewayRouter
 from .runtime import open_bridge
-from .scanner import scan
+from .scanner import scan_ranked
 from .selection import Blacklist
 from .subscription import subscription, subscription_hostname
 from .subscription_http import client_token, subscription_server
@@ -116,25 +116,30 @@ def serve(args, stop_event):
         blacklist = Blacklist(args.state_dir / 'blacklist.sqlite3')
         registry = PortRegistry(args.state_dir / 'ports.sqlite3', args.first_port, args.last_port,
                                 {port for port in (args.stats_port, args.subscription_port) if port})
-        selected = scan(fetch(), gateways, os.environ.get('IPAPI_IS_KEY'), blacklist.active(time.time()),
-                        args.max_countries, blacklist=blacklist, stop_event=stop_event)
+        ranked = scan_ranked(fetch(), gateways, os.environ.get('IPAPI_IS_KEY'), blacklist.active(time.time()),
+                             blacklist=blacklist, stop_event=stop_event)
         if stop_event.is_set():
             return
-        if not selected:
+        if not ranked:
             raise RuntimeError('no qualified VPNGate country available')
         with ExitStack() as resources:
             router = GatewayRouter(bind, args.state_dir / 'routes.json')
             resources.callback(router.close)
             pool = GatewayPool(gateways, registry, os.environ.get('IPAPI_IS_KEY'), args.max_countries, router.publish)
             resources.callback(pool.close)
-            for country, (candidate, _) in selected.items():
+            for candidate, measurement in ranked:
                 if stop_event.is_set():
                     return
+                active = pool.routes()
+                if len(active) >= args.max_countries:
+                    break
+                if candidate.country in active or measurement.exit_ip in {route.exit_ip for route in active.values()}:
+                    continue
                 try:
                     pool.replace(candidate, blacklist.active(time.time()))
-                except ProbeError as exc:
-                    logging.warning('country %s failed activation: %s', country, exc)
-                    if not isinstance(exc, ClassificationError):
+                except (ProbeError, ValueError) as exc:
+                    logging.warning('country %s failed activation; trying next qualified candidate: %s', candidate.country, exc)
+                    if isinstance(exc, ProbeError) and not isinstance(exc, ClassificationError):
                         blacklist.add(candidate.ip, 'activation probe failed', time.time())
             if stop_event.is_set():
                 return

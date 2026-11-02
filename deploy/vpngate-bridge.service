@@ -16,6 +16,7 @@ ExecStart=/usr/bin/python3 -m vpngate_bridge.service --state-dir /var/lib/vpngat
 # Restart recovery and final drained accounting are not implemented yet.
 Restart=no
 TimeoutStopSec=300
+KillMode=mixed
 
 [Install]
 WantedBy=multi-user.target

@@ -15,6 +15,7 @@ docker build -f gateway/Dockerfile -t vpngate-gateway .
 docker build -f bridge/Dockerfile -t vpngate-sing-box .
 docker network create vgb-private
 go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.4
+sudo install -m 0755 "$(go env GOPATH)/bin/grpcurl" /usr/local/bin/grpcurl
 ```
 
 Ensure grpcurl is also on the systemd service PATH (the template uses the system PATH, not an interactive shell's Go bin directory).
