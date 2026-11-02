@@ -2,6 +2,7 @@
 import asyncio
 import ipaddress
 import json
+import logging
 import os
 import re
 import tempfile
@@ -120,8 +121,11 @@ class GatewayRouter:
         route = self._routes.get(code)
         try:
             # A private bind alone does not prevent routed LAN access to host addresses.
-            if (writer.get_extra_info('peername')[0] != self.host or route is None
-                    or len(self._connections) >= self.limit):
+            peer = writer.get_extra_info('peername')[0]
+            if peer != self.host:
+                logging.warning('private gateway relay rejected source %s (expected %s)', peer, self.host)
+                return
+            if route is None or len(self._connections) >= self.limit:
                 return
             self._connections[writer] = (code, None)
             remote_reader, upstream = await asyncio.wait_for(
@@ -132,7 +136,7 @@ class GatewayRouter:
 
             async def pump(source, destination):
                 while True:
-                    data = await asyncio.wait_for(source.read(65536), timeout=300)
+                    data = await source.read(65536)
                     if not data:
                         if destination.can_write_eof():
                             destination.write_eof()
@@ -141,8 +145,8 @@ class GatewayRouter:
                     await destination.drain()
 
             await asyncio.gather(pump(reader, upstream), pump(remote_reader, writer))
-        except (OSError, asyncio.TimeoutError):
-            pass
+        except (OSError, asyncio.TimeoutError) as exc:
+            logging.warning('private gateway relay failed: %s (errno=%s)', type(exc).__name__, getattr(exc, 'errno', None))
         finally:
             self._connections.pop(writer, None)
             writer.close()

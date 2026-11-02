@@ -32,10 +32,10 @@ from vpngate_bridge.subscription import subscription
 from vpngate_bridge.subscription_http import client_token, subscription_server
 
 
-def exit_ip(port=None):
+def exit_ip(port=None, host='127.0.0.1'):
     args = ['curl', '--disable', '-fsS', '--max-time', '10', '--noproxy', '' if port else '*']
     if port:
-        args += ['--socks5-hostname', f'127.0.0.1:{port}']
+        args += ['--socks5-hostname', f'{host}:{port}']
     result = subprocess.run([*args, 'https://api.ipify.org/'], capture_output=True, text=True, timeout=12)
     if result.returncode:
         raise ProbeError('subscribed client request failed')
@@ -101,6 +101,9 @@ def main():
             else:
                 raise RuntimeError('no real qualified VPNGate relay available')
             print(f'qualified {route.country}; testing subscribed TLS clients', flush=True)
+            endpoint = router.countries()[0]
+            if exit_ip(endpoint.socks_port, endpoint.socks_host) != route.exit_ip:
+                raise RuntimeError('private router did not preserve the selected gateway exit')
             check_stack(root, route, panel, identity, direct, pool, router, candidate)
         finally:
             try:
