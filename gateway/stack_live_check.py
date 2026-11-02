@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from vpngate_bridge.bridge import Client, Country, build_config
+from vpngate_bridge.bridge import Client, build_config
 from vpngate_bridge.coordinator import LeaseCoordinator
 from vpngate_bridge.docker_gateway import DockerGateway
 from vpngate_bridge.fetcher import fetch
@@ -27,6 +27,7 @@ from vpngate_bridge.pool import GatewayPool
 from vpngate_bridge.ports import PortRegistry
 from vpngate_bridge.probe import ProbeError
 from vpngate_bridge.process import docker_epoch
+from vpngate_bridge.router import GatewayRouter
 from vpngate_bridge.subscription import subscription
 from vpngate_bridge.subscription_http import client_token, subscription_server
 
@@ -85,8 +86,11 @@ def main():
     random.shuffle(candidates)
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
+        host = subprocess.check_output(['docker', 'network', 'inspect', '--format',
+                                        '{{(index .IPAM.Config 0).Gateway}}', 'bridge'], text=True).strip()
+        router = GatewayRouter(host, root / 'routes.json')
         pool = GatewayPool(DockerGateway('bridge'), PortRegistry(root / 'ports.sqlite', 20000, 60000, {10085}),
-                           None, 1, lambda _: None)
+                           None, 1, router.publish)
         try:
             for candidate in candidates[:6]:
                 try:
@@ -97,18 +101,21 @@ def main():
             else:
                 raise RuntimeError('no real qualified VPNGate relay available')
             print(f'qualified {route.country}; testing subscribed TLS clients', flush=True)
-            check_stack(root, route, panel, identity, direct)
+            check_stack(root, route, panel, identity, direct, pool, router, candidate)
         finally:
-            pool.close()
+            try:
+                pool.close()
+            finally:
+                router.close()
 
 
-def check_stack(root, route, panel, identity, direct):
+def check_stack(root, route, panel, identity, direct, pool, router, candidate):
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                     '-keyout', str(root / 'key.pem'), '-out', str(root / 'cert.pem'),
                     '-subj', '/CN=bridge.test', '-addext', 'subjectAltName=DNS:bridge.test', '-days', '1'],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    config = build_config([Country(route.country, route.socks_host, route.socks_port,
-                                   route.vless_port, route.hy2_port)],
+    countries = router.countries()
+    config = build_config(countries,
                           [Client('stack-ci', identity, secrets.token_urlsafe(32))], '/work/cert.pem', '/work/key.pem')
     # CI never publishes proxy listeners on a runner's public interface.
     for inbound in config['inbounds']:
@@ -200,6 +207,16 @@ def check_stack(root, route, panel, identity, direct):
             if actual != route.exit_ip or actual == direct:
                 raise RuntimeError('subscribed client bypassed the selected gateway')
             print(urlsplit(link).scheme + ' TLS verified; selected VPNGate exit matched', flush=True)
+        replacement = pool.replace(candidate, ())
+        if router.countries() != countries or docker_epoch(server) != epoch:
+            raise RuntimeError('gateway replacement changed listeners or restarted sing-box')
+        for port in (1081, 1082):
+            if exit_ip(port) != replacement.exit_ip:
+                raise RuntimeError('subscribed client failed after gateway replacement')
+        with opener.open(url, timeout=15) as response:
+            if base64.b64decode(response.read(), validate=True).decode().splitlines() != links:
+                raise RuntimeError('gateway replacement changed subscription credentials or endpoints')
+        print('real OpenVPN gateway replaced; both subscribed clients survived without sing-box restart', flush=True)
         controller.tick()
         usage = ledger.usage('stack-ci')
         if usage is None or min(usage) <= 0 or panel.clients()[0].panel_bytes != sum(usage):
