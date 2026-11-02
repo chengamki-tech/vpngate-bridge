@@ -15,6 +15,10 @@ class ProbeError(Exception):
     """A candidate could not be verified and must not be advertised."""
 
 
+class ClassificationError(ProbeError):
+    """Unavailable metadata rejects a candidate without proving its subnet is bad."""
+
+
 def _curl(proxy, url, output, format_string):
     command = ['curl', '--disable', '--silent', '--show-error', '--fail', '--noproxy', '',
                '--socks5-hostname', proxy, '--proto', '=https', '--connect-timeout', '10',
@@ -69,12 +73,12 @@ def probe(candidate, proxy, api_key):
         if data['ip'] != ips[0] or type(hosting) is not bool or not isinstance(country, str):
             raise ValueError('incomplete classification')
     except urllib.error.HTTPError as exc:
-        raise ProbeError(f'exit classification HTTP {exc.code}') from None
+        raise ClassificationError(f'exit classification HTTP {exc.code}') from None
     except urllib.error.URLError:
-        raise ProbeError('exit classification network error') from None
+        raise ClassificationError('exit classification network error') from None
     except (OSError, ValueError, TypeError, KeyError):
         # Do not chain exceptions: URL errors can contain the API key.
-        raise ProbeError('exit classification invalid response') from None
+        raise ClassificationError('exit classification invalid response') from None
     preliminary = Measurement(candidate.country, country, ips[0], hosting, tuple(latencies), 0, candidate.uptime_ms)
     if score(preliminary) is None:
         raise ProbeError('exit did not meet country, hosting, latency or address requirements')

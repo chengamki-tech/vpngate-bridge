@@ -33,7 +33,8 @@ def main(argv=None):
         blacklist = Blacklist(args.state_dir / 'blacklist.sqlite3')
         ports = PortRegistry(args.state_dir / 'ports.sqlite3', args.first_port, args.last_port, set())
         gateway = DockerGateway(args.network, cpus=args.cpus, memory_mb=args.memory_mb)
-        selected = scan(fetch(), gateway, os.environ.get('IPAPI_IS_KEY'), blacklist.active(time.time()), args.max_countries)
+        selected = scan(fetch(), gateway, os.environ.get('IPAPI_IS_KEY'), blacklist.active(time.time()),
+                        args.max_countries, blacklist=blacklist)
         countries = {}
         for code, (candidate, measurement) in selected.items():
             vless, hy2 = ports.assign(code)

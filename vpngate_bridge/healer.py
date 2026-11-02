@@ -70,7 +70,7 @@ class Healer:
                 blocked = self.blacklist.active(now)
                 other_exits = [route.exit_ip for route in self.pool.routes().values()]
                 selected = scan({country: candidates.get(country, [])}, self.pool.gateways, self.pool.api_key,
-                                blocked, 1, exclude_exits=other_exits)
+                                blocked, 1, exclude_exits=other_exits, blacklist=self.blacklist, now=now)
                 if country in selected:
                     candidate, _ = selected[country]
                     route = self.pool.replace(candidate, blocked, expected_absent=True)
