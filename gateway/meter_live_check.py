@@ -5,11 +5,13 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from vpngate_bridge.collector import collect
 from vpngate_bridge.meter import CounterLedger
 from vpngate_bridge.process import docker_epoch
+from vpngate_bridge.lease import renew
 
 IMAGE = 'vpngate-sing-box'
 IDENTITY = 'bf000d23-0752-40b4-affe-68f7707a9661'
@@ -30,6 +32,13 @@ def main():
     thread = threading.Thread(target=http.serve_forever, daemon=True)
     thread.start()
     containers = []
+    leases = []
+    stop = threading.Event()
+    def refresh():
+        while not stop.wait(1):
+            for path, identity in tuple(leases): renew(path, identity, duration=5)
+    refresher = threading.Thread(target=refresh, daemon=True)
+    refresher.start()
     try:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -40,7 +49,12 @@ def main():
             for name, config in configs.items():
                 path = root / (name + '.json')
                 path.write_text(json.dumps(config))
-                container = subprocess.check_output(['docker', 'run', '-d', '--network', 'host', '-v', f'{path}:/config.json:ro', IMAGE, 'run', '-c', '/config.json'], text=True).strip()
+                lease_dir = root / name
+                lease_dir.mkdir()
+                identity = str(uuid.uuid4())
+                renew(lease_dir / 'lease.json', identity, duration=5)
+                leases.append((lease_dir / 'lease.json', identity))
+                container = subprocess.check_output(['docker', 'run', '-d', '--network', 'host', '-e', 'BRIDGE_RUN_ID=' + identity, '-v', f'{lease_dir}:/run/vgb:ro', '-v', f'{path}:/config.json:ro', IMAGE, 'run', '-c', '/config.json'], text=True).strip()
                 containers.append(container)
             for attempt in range(20):
                 result = subprocess.run(['curl', '--disable', '-fsS', '--noproxy', '', '--socks5-hostname', '127.0.0.1:1081', '--max-time', '2', 'http://127.0.0.1:18080/'], capture_output=True)
@@ -59,8 +73,18 @@ def main():
             assert usage is not None and usage[0] > 0 and usage[1] >= 65536, usage
             collect(ledger, epoch, '127.0.0.1:10085', os.environ['STATS_PROTO'], ['alice'], lambda: docker_epoch(containers[0]))
             assert ledger.usage('alice') == usage, 'repeated collection double counted usage'
-            print('real VLESS transfer, gRPC collection and idempotent persistence passed')
+            stop.set()
+            refresher.join()
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                running = subprocess.check_output(['docker', 'inspect', '--format', '{{.State.Running}}', containers[0]], text=True).strip()
+                if running == 'false': break
+                time.sleep(.2)
+            else: raise RuntimeError('bridge survived lease expiration')
+            print('real VLESS transfer, gRPC collection, idempotent persistence and lease shutdown passed')
     finally:
+        stop.set()
+        refresher.join()
         for container in containers:
             subprocess.run(['docker', 'logs', '--tail', '5', container])
             subprocess.run(['docker', 'rm', '-f', container], stdout=subprocess.DEVNULL)

@@ -5,6 +5,8 @@ RUN git clone --depth 1 --branch v1.14.4 https://github.com/SagerNet/sing-box.gi
 WORKDIR /src
 RUN CGO_ENABLED=0 go build -trimpath -tags with_quic,with_v2ray_api -o /out/sing-box ./cmd/sing-box
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata python3
 COPY --from=builder /out/sing-box /usr/local/bin/sing-box
-ENTRYPOINT ["sing-box"]
+COPY vpngate_bridge/__init__.py vpngate_bridge/lease.py /app/vpngate_bridge/
+COPY bridge/entrypoint.py /app/entrypoint.py
+ENTRYPOINT ["python3", "/app/entrypoint.py"]
