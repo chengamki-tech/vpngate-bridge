@@ -13,3 +13,9 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m unittest discover -s tests -v
+  gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f gateway/Dockerfile -t vpngate-gateway .
+      - run: docker run --rm --cap-add=NET_ADMIN --entrypoint python -v "$PWD/gateway/firewall_check.py:/app/firewall_check.py:ro" vpngate-gateway /app/firewall_check.py
