@@ -1,0 +1,33 @@
+name: live subscribed VPNGate stack
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.4
+      - run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - run: docker build -f gateway/Dockerfile -t vpngate-gateway .
+      - run: docker build -f bridge/Dockerfile -t vpngate-sing-box .
+      - run: sudo mkdir -p /dev/net && if [ ! -c /dev/net/tun ]; then sudo mknod /dev/net/tun c 10 200; fi
+      - run: docker volume create vgb-panel-stack
+      - run: docker run --rm -v vgb-panel-stack:/etc/x-ui --entrypoint /app/x-ui ghcr.io/mhsanaei/3x-ui:v3.11.0 setting -username vgb-ci -password vgb-ci-password -webBasePath /panel-test/ -port 2053
+      - run: docker run -d --name vgb-panel-stack -e XUI_ENABLE_FAIL2BAN=false -v vgb-panel-stack:/etc/x-ui -p 127.0.0.1::2053 ghcr.io/mhsanaei/3x-ui:v3.11.0
+      - run: echo "PANEL_URL=http://127.0.0.1:$(docker port vgb-panel-stack 2053/tcp | cut -d: -f2)/panel-test/" >> "$GITHUB_ENV"
+      - run: python -m gateway.stack_live_check
+        env:
+          STATS_PROTO: ${{ github.workspace }}/bridge/stats.proto
+      - if: always()
+        run: docker rm -f vgb-panel-stack || true
+      - if: always()
+        run: docker volume rm -f vgb-panel-stack || true
