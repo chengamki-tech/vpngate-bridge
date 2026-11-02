@@ -31,9 +31,11 @@ class GatewayPool:
         with self._lock:
             return {code: route for code, (route, _) in self._active.items()}
 
-    def replace(self, candidate, blocked):
+    def replace(self, candidate, blocked, *, expected_absent=False):
         with self._lock:
             code = candidate.country
+            if expected_absent and code in self._active:
+                raise ValueError('country was concurrently activated')
             if code not in self._active and len(self._active) >= self.max_countries:
                 raise ValueError('country limit reached')
             networks = tuple(ipaddress.ip_network(net) for net in blocked)
@@ -67,13 +69,16 @@ class GatewayPool:
                 previous[1].__exit__(None, None, None)
             return route
 
-    def remove(self, country):
+    def remove(self, country, *, expected=None):
         with self._lock:
             previous = self._active.get(country)
             if previous is None:
-                return
+                return False
+            if expected is not None and previous[0] != expected:
+                raise ValueError('country route changed during health check')
             proposed = self.routes()
             del proposed[country]
             self.publish(proposed)
             del self._active[country]
             previous[1].__exit__(None, None, None)
+            return True

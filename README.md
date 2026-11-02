@@ -1,6 +1,6 @@
 # VPNGate Bridge
 
-**Work in progress. Not production-ready.** This project is intended to turn VPNGate OpenVPN relays into country-specific sing-box entries managed through 3x-ui. It does not yet provide an operational deployment, authenticated subscription endpoint, accounting, expiry enforcement, or automated healing.
+**Work in progress. Not production-ready.** This project is intended to turn VPNGate OpenVPN relays into country-specific sing-box entries managed through 3x-ui. It does not yet provide an operational deployment, authenticated subscription endpoint, accounting, expiry enforcement, or an integrated healing service.
 
 Implemented components:
 
@@ -8,6 +8,7 @@ Implemented components:
 - Rebuild relay configurations from an allowlist and pin their remote IP. A Docker gateway installs default-deny IPv4/IPv6 rules and exposes private SOCKS5 after the tunnel is ready.
 - Probe through disposable, CPU/memory-limited gateways. Reject timeouts, mismatched country, hosting exits, duplicate IPs and blacklisted subnets; score eligible exits. Non-hosting classification does **not** prove residential ownership.
 - Generate sing-box VLESS/WS/TLS and Hysteria2 configurations, client links and persistent country port assignments. A staged gateway pool re-probes before invoking a route-publisher callback and retains the previous gateway when the callback fails.
+- A healer component runs health checks every 10 minutes, removes a route after two consecutive failures, records failed subnets, and retries same-country selection until a replacement qualifies. It is not yet connected to a route publisher or deployment service.
 
 The pool is an experimental in-process component, not a deployment service. A route publisher and a restart/crash recovery mechanism do not exist yet; an abruptly killed controller can leave Docker containers behind. The pool does not enforce the transactional behavior of its publisher. The gateway currently supports TCP SOCKS CONNECT only, not UDP destinations. VPNGate server-certificate purpose is checked, but its certificate identity is not pinned to a hostname. Do not expose the generated inbounds or run this in production.
 
