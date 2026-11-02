@@ -41,14 +41,14 @@ def exit_ip(port=None, host='127.0.0.1'):
     return str(ipaddress.ip_address(result.stdout.strip()))
 
 
-def outbound_from_link(link):
+def outbound_from_link(link, certificate_path='/work/cert.pem'):
     """Import the generated link, keeping certificate verification enabled."""
     parsed = urlsplit(link)
     query = parse_qs(parsed.query)
     if parsed.hostname != 'bridge.test' or query.get('sni') != ['bridge.test']:
         raise ValueError('unexpected subscription destination')
     outbound = {'type': parsed.scheme, 'server': '127.0.0.1', 'server_port': parsed.port,
-                'tls': {'enabled': True, 'server_name': 'bridge.test', 'certificate_path': '/work/cert.pem'}}
+                'tls': {'enabled': True, 'server_name': 'bridge.test', 'certificate_path': certificate_path}}
     if parsed.scheme == 'vless':
         if query.get('security') != ['tls'] or query.get('type') != ['ws'] or query.get('path') != ['/ws']:
             raise ValueError('missing VLESS WS TLS parameters')

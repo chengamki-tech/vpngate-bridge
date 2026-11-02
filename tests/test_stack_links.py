@@ -18,6 +18,8 @@ class StackLinkTests(unittest.TestCase):
         self.assertEqual([vless['server_port'], hy2['server_port']], [20000, 20001])
         for outbound in (vless, hy2):
             self.assertEqual(outbound['tls'], {'enabled': True, 'server_name': 'bridge.test', 'certificate_path': '/work/cert.pem'})
+        self.assertEqual(outbound_from_link(links[0], certificate_path='/tmp/host-cert.pem')['tls']['certificate_path'],
+                         '/tmp/host-cert.pem')
 
     def test_acceptance_importer_rejects_wrong_destination_and_missing_transport(self):
         for link in ('vless://uuid@evil.test:443?sni=bridge.test',

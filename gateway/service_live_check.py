@@ -121,18 +121,22 @@ def main():
                     path = root / f'client-{index}.json'
                     path.write_text(json.dumps({
                         'inbounds': [{'type': 'socks', 'listen': '127.0.0.1', 'listen_port': port}],
-                        'outbounds': [outbound_from_link(link)],
+                        'outbounds': [outbound_from_link(link, certificate_path=str(root / 'cert.pem'))],
                     }))
                     log = root / f'client-{index}.log'
                     with log.open('wb') as output:
                         clients.append(subprocess.Popen([str(binary), 'run', '-c', str(path)],
                                                         stdout=output, stderr=subprocess.STDOUT))
                     for attempt in range(30):
+                        if clients[-1].poll() is not None:
+                            raise RuntimeError('subscription client exited before opening SOCKS')
                         try:
                             with socket.create_connection(('127.0.0.1', port), timeout=.2):
                                 break
                         except OSError:
                             time.sleep(.1)
+                    else:
+                        raise RuntimeError('subscription client did not open SOCKS')
                     actual = exit_ip(port)
                     if actual != route['exit_ip'] or actual == direct:
                         raise RuntimeError('service client did not use the selected VPNGate exit')
@@ -160,8 +164,12 @@ def main():
                     except subprocess.TimeoutExpired:
                         client.kill()
                         client.wait()
+                for path in root.glob('client-*.log'):
+                    print('\n'.join(path.read_text().splitlines()[-4:]), flush=True)
                 if worker.is_alive():
                     raise RuntimeError('service did not finish shutdown')
+                if errors:
+                    raise errors[0]
             if errors:
                 raise errors[0]
             if access.exists():
