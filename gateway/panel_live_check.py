@@ -1,6 +1,10 @@
 """Test the read adapter against a disposable 3x-ui instance in CI."""
 import os
 import time
+import tempfile
+from pathlib import Path
+from vpngate_bridge.meter import CounterLedger
+from vpngate_bridge.sync import sync_bridge_usage
 from vpngate_bridge.panel import Panel, PanelError
 
 
@@ -30,11 +34,18 @@ def main():
     assert clients[0].authorized(now_ms=int(time.time() * 1000), unreported_bridge_bytes=0)
     assert not clients[0].authorized(now_ms=int(time.time() * 1000), unreported_bridge_bytes=None)
     source = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
-    panel.push_global_totals(source, {'ci@example.com': (123, 456)})
-    panel.push_global_totals(source, {'ci@example.com': (123, 456)})
-    assert panel.clients()[0].panel_bytes == 579, 'traffic overlay missing or counted twice'
-    panel.push_global_totals(source, {'ci@example.com': (600, 600)})
-    assert not panel.clients()[0].authorized(now_ms=int(time.time() * 1000), unreported_bridge_bytes=0)
+    with tempfile.TemporaryDirectory() as directory:
+        ledger = CounterLedger(Path(directory) / 'meter.sqlite')
+        epoch = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+        ledger.begin(epoch, ['ci@example.com'])
+        now = int(time.time())
+        ledger.record(epoch, {'ci@example.com': (123, 456)}, now=now)
+        eligible = sync_bridge_usage(panel, ledger, source, ['ci@example.com'], now=now)
+        assert len(eligible) == 1
+        sync_bridge_usage(panel, ledger, source, ['ci@example.com'], now=now)
+        assert panel.clients()[0].panel_bytes == 579, 'traffic overlay missing or counted twice'
+        ledger.record(epoch, {'ci@example.com': (600, 600)}, now=now)
+        assert sync_bridge_usage(panel, ledger, source, ['ci@example.com'], now=now) == []
     print('real 3x-ui login, client state, idempotent traffic overlay and quota check passed')
 
 
