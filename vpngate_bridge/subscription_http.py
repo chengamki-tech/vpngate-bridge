@@ -57,6 +57,9 @@ def subscription_server(port, secret, authorize, render):
                 if not isinstance(content, str) or not content:
                     raise ValueError('subscription content unavailable')
                 body = content.encode('utf-8')
+                if not selected.authorized(now_ms=int(time.time() * 1000), unreported_bridge_bytes=0):
+                    self.respond(404)
+                    return
             except Exception:
                 self.respond(503)
                 return
