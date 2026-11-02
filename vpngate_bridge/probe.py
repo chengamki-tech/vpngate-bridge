@@ -4,6 +4,7 @@ import json
 import math
 import re
 import subprocess
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -66,9 +67,13 @@ def probe(candidate, proxy, api_key):
             hosting = data['data']['is_datacenter']
         if data['ip'] != ips[0] or type(hosting) is not bool or not isinstance(country, str):
             raise ValueError('incomplete classification')
-    except (OSError, ValueError, TypeError, KeyError) as exc:
+    except urllib.error.HTTPError as exc:
+        raise ProbeError(f'exit classification HTTP {exc.code}') from None
+    except urllib.error.URLError:
+        raise ProbeError('exit classification network error') from None
+    except (OSError, ValueError, TypeError, KeyError):
         # Do not chain exceptions: URL errors can contain the API key.
-        raise ProbeError('exit classification failed') from None
+        raise ProbeError('exit classification invalid response') from None
     preliminary = Measurement(candidate.country, country, ips[0], hosting, tuple(latencies), 0, candidate.uptime_ms)
     if score(preliminary) is None:
         raise ProbeError('exit did not meet country, hosting, latency or address requirements')
