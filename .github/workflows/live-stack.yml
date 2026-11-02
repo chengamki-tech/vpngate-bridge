@@ -23,7 +23,8 @@ jobs:
       - run: docker volume create vgb-panel-stack
       - run: docker run --rm -v vgb-panel-stack:/etc/x-ui --entrypoint /app/x-ui ghcr.io/mhsanaei/3x-ui:v3.11.0 setting -username vgb-ci -password vgb-ci-password -webBasePath /panel-test/ -port 2053
       - run: docker run -d --name vgb-panel-stack -e XUI_ENABLE_FAIL2BAN=false -v vgb-panel-stack:/etc/x-ui -p 127.0.0.1::2053 ghcr.io/mhsanaei/3x-ui:v3.11.0
-      - run: echo "PANEL_URL=http://127.0.0.1:$(docker port vgb-panel-stack 2053/tcp | cut -d: -f2)/panel-test/" >> "$GITHUB_ENV"
+      - run: |
+          echo "PANEL_URL=http://127.0.0.1:$(docker port vgb-panel-stack 2053/tcp | cut -d: -f2)/panel-test/" >> "$GITHUB_ENV"
       - run: python -m gateway.stack_live_check
         env:
           STATS_PROTO: ${{ github.workspace }}/bridge/stats.proto
