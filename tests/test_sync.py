@@ -25,3 +25,12 @@ class SyncTests(unittest.TestCase):
         panel.clients.return_value = [PanelClient('alice', 'id', 'sub', True, 0, 1000, 0)]
         ledger.usage.return_value = None
         with self.assertRaises(MeterError): sync_bridge_usage(panel, ledger, 'source', ['alice'], now=100)
+
+    def test_never_overwrites_higher_existing_panel_usage(self):
+        panel, ledger = Mock(), Mock()
+        panel._request.return_value = {'obj': [{'enable': False}]}
+        panel.clients.return_value = [PanelClient('alice', 'id', 'sub', True, 0, 1000, 300, 200, 100)]
+        ledger.usage.return_value = (100, 200)
+        with self.assertRaises(MeterError): sync_bridge_usage(panel, ledger, 'source', ['alice'], now=100)
+        panel.push_global_totals.assert_not_called()
+        ledger.invalidate.assert_called_once()

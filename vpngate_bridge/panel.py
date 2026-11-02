@@ -22,6 +22,8 @@ class PanelClient:
     expiry_ms: int
     total_bytes: int
     panel_bytes: int
+    panel_up: int = 0
+    panel_down: int = 0
 
     def authorized(self, *, now_ms, unreported_bridge_bytes):
         if (type(now_ms) is not int or now_ms < 0 or type(unreported_bridge_bytes) is not int
@@ -151,7 +153,7 @@ class Panel:
                     raise ValueError('invalid client record')
                 emails.add(email)
                 identifiers.add(identifier)
-                result.append(PanelClient(email, identifier, sub_id, enabled, expiry, total, up + down))
+                result.append(PanelClient(email, identifier, sub_id, enabled, expiry, total, up + down, up, down))
         except (KeyError, ValueError, TypeError, AttributeError):
             raise PanelError('invalid client list') from None
         return result

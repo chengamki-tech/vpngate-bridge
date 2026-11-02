@@ -19,6 +19,9 @@ def sync_bridge_usage(panel, ledger, source_guid, emails, *, now):
             usage = ledger.usage(name, now=now)
             if usage is None:
                 raise MeterError('fresh certain bridge usage required')
+            existing = before[name]
+            if existing.panel_bytes > sum(usage) or existing.panel_up > usage[0] or existing.panel_down > usage[1]:
+                raise MeterError('panel usage exceeds local ledger; reconciliation required')
             totals[name] = usage
         panel.push_global_totals(source_guid, totals)
         after = {client.email: client for client in panel.clients()}
