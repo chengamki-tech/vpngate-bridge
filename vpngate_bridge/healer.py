@@ -6,7 +6,7 @@ import threading
 import time
 
 from .fetcher import fetch
-from .probe import ProbeError, _curl
+from .probe import ClassificationError, ProbeError, _curl
 from .scanner import scan
 
 
@@ -25,6 +25,7 @@ class Healer:
         self.pool, self.blacklist, self.state_path = pool, blacklist, state_path
         self.fetcher, self.check = fetcher, check
         self._lock = threading.Lock()
+        self._stop_event = None
         with sqlite3.connect(self.state_path) as db:
             db.execute('CREATE TABLE IF NOT EXISTS health (country TEXT PRIMARY KEY, server TEXT NOT NULL, exit_ip TEXT NOT NULL, failures INTEGER NOT NULL, pending INTEGER NOT NULL)')
 
@@ -70,13 +71,21 @@ class Healer:
                 blocked = self.blacklist.active(now)
                 other_exits = [route.exit_ip for route in self.pool.routes().values()]
                 selected = scan({country: candidates.get(country, [])}, self.pool.gateways, self.pool.api_key,
-                                blocked, 1, exclude_exits=other_exits, blacklist=self.blacklist, now=now)
+                                blocked, 1, exclude_exits=other_exits, blacklist=self.blacklist, now=now,
+                                stop_event=self._stop_event)
+                if self._stop_event is not None and self._stop_event.is_set():
+                    return
                 if country in selected:
                     candidate, _ = selected[country]
-                    route = self.pool.replace(candidate, blocked, expected_absent=True)
-                    self._reset(route)
+                    try:
+                        route = self.pool.replace(candidate, blocked, expected_absent=True)
+                        self._reset(route)
+                    except ProbeError as exc:
+                        if not isinstance(exc, ClassificationError):
+                            self.blacklist.add(candidate.ip, 'replacement activation failed', now)
 
     def run(self, stop_event):
+        self._stop_event = stop_event
         while not stop_event.is_set():
             started = time.monotonic()
             try:

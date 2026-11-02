@@ -7,7 +7,7 @@ from .probe import ClassificationError, ProbeError, probe
 from .selection import choose, score
 
 
-def scan(grouped, gateways, api_key, blocked, max_countries, *, exclude_exits=(), blacklist=None, now=None):
+def scan(grouped, gateways, api_key, blocked, max_countries, *, exclude_exits=(), blacklist=None, now=None, stop_event=None):
     if type(max_countries) is not int or max_countries < 1:
         raise ValueError('max_countries must be positive')
     if now is None:
@@ -29,6 +29,8 @@ def scan(grouped, gateways, api_key, blocked, max_countries, *, exclude_exits=()
     results, sources = [], {}
     for country, candidates in sorted(grouped.items()):
         for candidate in candidates:
+            if stop_event is not None and stop_event.is_set():
+                return {}
             if candidate.country != country:
                 raise ValueError('candidate country does not match group')
             address = ipaddress.ip_address(candidate.ip)
@@ -49,6 +51,8 @@ def scan(grouped, gateways, api_key, blocked, max_countries, *, exclude_exits=()
                 continue
             results.append(result)
             sources[id(result)] = candidate
+    if stop_event is not None and stop_event.is_set():
+        return {}
     # A later failure invalidates earlier results from the same relay subnet too.
     results = [result for result in results
                if not any(ipaddress.ip_address(sources[id(result)].ip) in network for network in networks)]

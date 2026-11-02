@@ -2,6 +2,7 @@ import tempfile
 import os
 import unittest
 import uuid
+import threading
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
@@ -54,10 +55,10 @@ class RuntimeTests(unittest.TestCase):
             raise MeterError('wrong process')
         ledger.record(epoch, {name: (12, 34) for name in users}, now=now)
 
-    def runtime(self):
+    def runtime(self, **kwargs):
         return open_bridge(self.panel, self.ledger, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
                            [Country('JP', '172.18.0.1', 31080, 20000, 20001)], b'x' * 32,
-                           self.root / 'cert.pem', self.root / 'key.pem', self.root, self.root / 'stats.proto')
+                           self.root / 'cert.pem', self.root / 'key.pem', self.root, self.root / 'stats.proto', **kwargs)
 
     def test_authorizes_before_exposure_and_never_claims_a_running_epoch_was_drained(self):
         with self.runtime() as runtime:
@@ -91,6 +92,12 @@ class RuntimeTests(unittest.TestCase):
                 self.fail('changed user launched')
         self.assertNotIn('launch', self.events)
         self.cleanup.assert_not_called()
+        self.preflight.return_value = [self.client]
+        stop = threading.Event()
+        with patch('vpngate_bridge.runtime._docker', side_effect=lambda *args, **kwargs: stop.set()):
+            with self.assertRaises(InterruptedError):
+                with self.runtime(stop_event=stop):
+                    self.fail('canceled startup launched')
         self.ledger.begin(str(uuid.uuid4()), ['alice'])  # Preflight had no traffic and can close cleanly.
 
     def test_partial_docker_run_failure_preserves_uncertain_intent_and_cleans_owned_container(self):

@@ -32,7 +32,7 @@ class BridgeRuntime:
 
 @contextmanager
 def open_bridge(panel, ledger, source_guid, countries, secret, certificate, key, state_dir,
-                proto_path, *, image='vpngate-sing-box', listen='0.0.0.0', stats_port=10085):
+                proto_path, *, image='vpngate-sing-box', listen='0.0.0.0', stats_port=10085, stop_event=None):
     """Public admission needs verified panel state; uncertain prior epochs never restart."""
     address = ipaddress.ip_address(listen)
     if address.version != 4 or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@-]*', image):
@@ -67,11 +67,15 @@ def open_bridge(panel, ledger, source_guid, countries, secret, certificate, key,
                      '--security-opt=no-new-privileges', '--read-only',
                      '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m']
         _docker('run', '--rm', *isolation, *mounts, image, 'check', '-c', '/config.json', timeout=30)
+        if stop_event is not None and stop_event.is_set():
+            raise InterruptedError('bridge startup canceled')
         # No bridge exists during this zero-raw-counter epoch, so it can be finalized safely.
         bootstrap = str(uuid.uuid4())
         zeros = {name: (0, 0) for name in identities}
         ledger.begin(bootstrap, identities)
         try:
+            if stop_event is not None and stop_event.is_set():
+                raise InterruptedError('bridge startup canceled')
             ledger.record(bootstrap, zeros)
             eligible = sync_bridge_usage(panel, ledger, source_guid, identities, now=int(time.time()))
             if {client.email: (client.uuid, client.sub_id) for client in eligible} != identities:
@@ -80,6 +84,8 @@ def open_bridge(panel, ledger, source_guid, countries, secret, certificate, key,
             ledger.close(bootstrap, zeros, quiesced=True)
         try:
             # Persist intent before Docker can expose listeners, including partial run failures.
+            if stop_event is not None and stop_event.is_set():
+                raise InterruptedError('bridge startup canceled')
             ledger.begin(run_id, identities)
             attempted = True
             renew(lease_path, run_id, duration=10)
@@ -88,6 +94,8 @@ def open_bridge(panel, ledger, source_guid, countries, secret, certificate, key,
                                 '--mount', f'type=bind,src={root},dst=/run/vgb,readonly',
                                 '-e', 'BRIDGE_RUN_ID=' + run_id, *mounts,
                                 image, 'run', '-c', '/config.json', timeout=30)
+            if stop_event is not None and stop_event.is_set():
+                raise InterruptedError('bridge startup canceled')
             incarnation = docker_epoch(container)
 
             def process_epoch():

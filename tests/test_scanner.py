@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+import threading
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -36,6 +37,12 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(scan({'JP': [candidate]}, gateway, 'key', (), 1), {})
         self.assertEqual(gateway.closed, ['8.8.8.8'])
         with self.assertRaises(ValueError): scan({}, gateway, 'key', (), 0)
+        stop = threading.Event()
+        def finishing_probe(*args):
+            stop.set()
+            return Measurement('JP', 'JP', '1.1.1.1', False, (100,)*3, 100, 1)
+        with patch('vpngate_bridge.scanner.probe', side_effect=finishing_probe):
+            self.assertEqual(scan({'JP': [candidate]}, Gateway(), None, (), 1, stop_event=stop), {})
 
     def test_failed_subnet_skips_other_ports_and_survives_next_scan_until_expiry(self):
         with tempfile.TemporaryDirectory() as directory:

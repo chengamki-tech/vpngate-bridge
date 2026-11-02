@@ -6,6 +6,7 @@ from vpngate_bridge.fetcher import Candidate
 from vpngate_bridge.healer import Healer
 from vpngate_bridge.pool import ActiveRoute
 from vpngate_bridge.selection import Blacklist, Measurement
+from vpngate_bridge.probe import ClassificationError, ProbeError
 
 
 class FakePool:
@@ -28,6 +29,23 @@ class FakePool:
 
 
 class HealerTests(unittest.TestCase):
+    def test_failed_replacement_stays_pending_and_only_bad_relays_are_blacklisted(self):
+        for failure, blocked in ((ProbeError('tunnel failed'), True), (ClassificationError('metadata unavailable'), False)):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as directory:
+                pool = FakePool(ActiveRoute('JP', '8.8.8.8', '8.8.4.4', '172.18.0.2', 1080, 20000, 20001))
+                blacklist = Blacklist(Path(directory) / 'blacklist.sqlite')
+                candidate = Candidate('1.1.1.1', 'JP', 1, 1, 'x')
+                measurement = Measurement('JP', 'JP', '1.0.0.1', False, (100,)*3, 100, 1)
+                healer = Healer(pool, blacklist, Path(directory) / 'health.sqlite',
+                                fetcher=lambda: {'JP': [candidate]}, check=lambda _: False)
+                with patch('vpngate_bridge.healer.scan', return_value={'JP': (candidate, measurement)}), \
+                        patch.object(pool, 'replace', side_effect=failure):
+                    healer.tick(now=100)
+                    healer.tick(now=700)
+                self.assertEqual(pool.routes(), {})
+                self.assertEqual(len(healer._pending()), 1)
+                self.assertEqual('1.1.1.0/24' in blacklist.active(700), blocked)
+
     def test_two_failures_rescan_same_country_and_preserve_ports(self):
         with tempfile.TemporaryDirectory() as directory:
             pool = FakePool(ActiveRoute('JP', '8.8.8.8', '8.8.4.4', '172.18.0.2', 1080, 20000, 20001))

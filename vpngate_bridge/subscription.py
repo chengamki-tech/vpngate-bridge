@@ -5,7 +5,7 @@ import uuid
 from urllib.parse import quote, urlencode
 
 
-def subscription(config, client_name, hostname):
+def subscription_hostname(hostname):
     try:
         host = hostname.encode('idna').decode('ascii').lower()
     except (AttributeError, UnicodeError) as exc:
@@ -14,6 +14,11 @@ def subscription(config, client_name, hostname):
     if (len(host) > 253 or len(labels) < 2 or
             any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) for label in labels)):
         raise ValueError('invalid subscription hostname')
+    return host
+
+
+def subscription(config, client_name, hostname):
+    host = subscription_hostname(hostname)
     links, protocols = [], {}
     for inbound in config['inbounds']:
         kind, tag = inbound.get('type'), inbound.get('tag', '')
