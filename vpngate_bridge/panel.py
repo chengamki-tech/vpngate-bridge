@@ -67,10 +67,14 @@ class Panel:
         self._cookies = http.cookiejar.CookieJar()
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect(), urllib.request.HTTPCookieProcessor(self._cookies))
         self._logged_in = False
+        self._csrf = None
 
     def _request(self, path, body=None):
         data = None if body is None else json.dumps(body).encode('utf-8')
-        request = urllib.request.Request(self._base + path, data=data, headers={'Content-Type': 'application/json', 'Accept': 'application/json', 'User-Agent': 'vpngate-bridge/0.1'})
+        headers = {'Content-Type': 'application/json', 'Accept': 'application/json', 'User-Agent': 'vpngate-bridge/0.1'}
+        if body is not None and self._csrf:
+            headers['X-CSRF-Token'] = self._csrf
+        request = urllib.request.Request(self._base + path, data=data, headers=headers)
         try:
             with self._opener.open(request, timeout=10) as response:
                 payload = response.read(16 * 1024 * 1024 + 1)
@@ -91,6 +95,11 @@ class Panel:
     def login(self, *, two_factor_code=None):
         self._logged_in = False
         self._cookies.clear()
+        self._csrf = None
+        token = self._request('csrf-token').get('obj')
+        if not isinstance(token, str) or not token or len(token) > 256 or any(ord(ch) < 33 or ord(ch) > 126 for ch in token):
+            raise PanelError('invalid panel CSRF token')
+        self._csrf = token
         body = {'username': self._username, 'password': self._password}
         if two_factor_code is not None:
             if not isinstance(two_factor_code, str) or not two_factor_code:

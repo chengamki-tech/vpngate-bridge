@@ -17,10 +17,15 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
     def do_POST(self):
         Handler.calls.append((self.path, json.loads(self.rfile.read(int(self.headers['Content-Length'])))))
-        self.reply({'success': True}, headers=[('Set-Cookie', 'session=abc; Path=/prefix/')])
+        if self.headers.get('X-CSRF-Token') != 'csrf-test' or self.headers.get('Cookie') != 'session=preauth':
+            self.reply({'success': False}, 403)
+        else:
+            self.reply({'success': True}, headers=[('Set-Cookie', 'session=abc; Path=/prefix/')])
     def do_GET(self):
         Handler.calls.append((self.path, self.headers.get('Cookie')))
-        if self.path != '/prefix/panel/api/clients/list' or self.headers.get('Cookie') != 'session=abc':
+        if self.path == '/prefix/csrf-token':
+            self.reply({'success': True, 'obj': 'csrf-test'}, headers=[('Set-Cookie', 'session=preauth; Path=/prefix/')])
+        elif self.path != '/prefix/panel/api/clients/list' or self.headers.get('Cookie') != 'session=abc':
             self.reply({'success': False}, 403)
         else: self.reply({'success': True, 'obj': Handler.clients})
 
@@ -44,9 +49,9 @@ class PanelTests(unittest.TestCase):
         panel = self.panel()
         panel.login(two_factor_code='123456')
         clients = panel.clients()
-        self.assertEqual(Handler.calls[0][0], '/prefix/login')
-        self.assertEqual(Handler.calls[0][1]['twoFactorCode'], '123456')
-        self.assertEqual(Handler.calls[1][1], 'session=abc')
+        self.assertEqual(Handler.calls[1][0], '/prefix/login')
+        self.assertEqual(Handler.calls[1][1]['twoFactorCode'], '123456')
+        self.assertEqual(Handler.calls[2][1], 'session=abc')
         self.assertTrue(clients[0].authorized(now_ms=100000, unreported_bridge_bytes=0))
         self.assertFalse(clients[0].authorized(now_ms=200000, unreported_bridge_bytes=0))
         self.assertFalse(clients[0].authorized(now_ms=100000, unreported_bridge_bytes=700))
