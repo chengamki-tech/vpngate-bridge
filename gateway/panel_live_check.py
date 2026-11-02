@@ -10,7 +10,9 @@ def main():
         try:
             panel.login()
             break
-        except PanelError:
+        except PanelError as exc:
+            if attempt == 29:
+                print(f'login failure: {exc}', flush=True)
             if attempt == 29:
                 raise
             time.sleep(1)

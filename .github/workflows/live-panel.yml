@@ -18,6 +18,8 @@ jobs:
       - run: |
           echo "PANEL_URL=http://127.0.0.1:$(docker port vgb-panel-test 2053/tcp | cut -d: -f2)/panel-test/" >> "$GITHUB_ENV"
       - run: python -m gateway.panel_live_check
+      - if: failure()
+        run: docker logs --tail 30 vgb-panel-test || true
       - if: always()
         run: docker rm -f vgb-panel-test || true
       - if: always()

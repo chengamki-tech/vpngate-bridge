@@ -80,9 +80,13 @@ class Panel:
             if not isinstance(result, dict) or result.get('success') is not True:
                 raise ValueError('panel request unsuccessful')
             return result
-        except (OSError, ValueError, TypeError) as exc:
+        except urllib.error.HTTPError as exc:
+            raise PanelError(f'panel HTTP {exc.code}') from None
+        except urllib.error.URLError:
+            raise PanelError('panel network error') from None
+        except (OSError, ValueError, TypeError):
             # HTTP errors and URLs may contain secrets; do not expose their details.
-            raise PanelError('panel request failed') from None
+            raise PanelError('invalid panel response') from None
 
     def login(self, *, two_factor_code=None):
         self._logged_in = False
