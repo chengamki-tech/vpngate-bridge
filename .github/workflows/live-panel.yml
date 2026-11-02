@@ -1,0 +1,23 @@
+name: live 3x-ui adapter test
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-panel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: docker volume create vgb-panel-test
+      - run: docker run --rm -v vgb-panel-test:/etc/x-ui --entrypoint /app/x-ui ghcr.io/mhsanaei/3x-ui:v3.11.0 setting -username vgb-ci -password vgb-ci-password -webBasePath /panel-test/ -port 2053
+      - run: docker run -d --name vgb-panel-test -e XUI_ENABLE_FAIL2BAN=false -v vgb-panel-test:/etc/x-ui -p 127.0.0.1::2053 ghcr.io/mhsanaei/3x-ui:v3.11.0
+      - run: echo "PANEL_URL=http://127.0.0.1:$(docker port vgb-panel-test 2053/tcp | cut -d: -f2)/panel-test/" >> "$GITHUB_ENV"
+      - run: python -m gateway.panel_live_check
+      - if: always()
+        run: docker rm -f vgb-panel-test || true
+      - if: always()
+        run: docker volume rm -f vgb-panel-test || true
