@@ -3,7 +3,7 @@ import os
 import time
 import tempfile
 from pathlib import Path
-from vpngate_bridge.meter import CounterLedger
+from vpngate_bridge.meter import CounterLedger, MeterError
 from vpngate_bridge.sync import sync_bridge_usage
 from vpngate_bridge.panel import Panel, PanelError
 
@@ -46,6 +46,15 @@ def main():
         assert panel.clients()[0].panel_bytes == 579, 'traffic overlay missing or counted twice'
         ledger.record(epoch, {'ci@example.com': (600, 600)}, now=now)
         assert sync_bridge_usage(panel, ledger, source, ['ci@example.com'], now=now) == []
+        panel.push_global_totals(source, {'ci@example.com': (700, 800)})
+        try:
+            sync_bridge_usage(panel, ledger, source, ['ci@example.com'], now=now)
+        except MeterError:
+            pass
+        else:
+            raise AssertionError('lower ledger overwrote higher panel usage')
+        assert panel.clients()[0].panel_bytes == 1500
+        assert ledger.usage('ci@example.com', now=now) is None
     print('real 3x-ui login, client state, idempotent traffic overlay and quota check passed')
 
 
