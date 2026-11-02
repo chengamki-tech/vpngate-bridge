@@ -12,6 +12,9 @@ from vpngate_bridge.collector import collect
 from vpngate_bridge.meter import CounterLedger
 from vpngate_bridge.process import docker_epoch
 from vpngate_bridge.lease import renew
+from vpngate_bridge.panel import Panel
+from vpngate_bridge.coordinator import LeaseCoordinator
+from vpngate_bridge.meter import MeterError
 
 IMAGE = 'vpngate-sing-box'
 IDENTITY = 'bf000d23-0752-40b4-affe-68f7707a9661'
@@ -34,9 +37,11 @@ def main():
     containers = []
     leases = []
     stop = threading.Event()
+    lease_lock = threading.Lock()
     def refresh():
         while not stop.wait(1):
-            for path, identity in tuple(leases): renew(path, identity, duration=5)
+            with lease_lock:
+                for path, identity in tuple(leases): renew(path, identity, duration=5)
     refresher = threading.Thread(target=refresh, daemon=True)
     refresher.start()
     try:
@@ -73,6 +78,31 @@ def main():
             assert usage is not None and usage[0] > 0 and usage[1] >= 65536, usage
             collect(ledger, epoch, '127.0.0.1:10085', os.environ['STATS_PROTO'], ['alice'], lambda: docker_epoch(containers[0]))
             assert ledger.usage('alice') == usage, 'repeated collection double counted usage'
+            if os.environ.get('PANEL_URL'):
+                panel = Panel(os.environ['PANEL_URL'], 'vgb-ci', 'vgb-ci-password')
+                for attempt in range(30):
+                    try:
+                        panel.login()
+                        break
+                    except Exception:
+                        if attempt == 29: raise
+                        time.sleep(1)
+                inbound = panel._request('panel/api/inbounds/add', {'enable': False, 'remark': 'meter-ci', 'port': 23456, 'protocol': 'vless', 'settings': {'clients': [], 'decryption': 'none'}, 'streamSettings': {'network': 'tcp', 'security': 'none'}})['obj']
+                panel._request('panel/api/clients/add', {'client': {'id': IDENTITY, 'email': 'alice', 'subId': 'meter-ci', 'enable': True, 'totalGB': 10000000, 'expiryTime': 0}, 'inboundIds': [inbound['id']]})
+                with lease_lock:
+                    server_lease, server_run = leases.pop(0)
+                source = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+                controller = LeaseCoordinator(panel, ledger, source, {'alice': (IDENTITY, 'meter-ci')}, epoch, lambda: docker_epoch(containers[0]), '127.0.0.1:10085', os.environ['STATS_PROTO'], server_lease, server_run)
+                assert len(controller.tick()) == 1
+                panel.push_global_totals(source, {'alice': (usage[0] + 1000, usage[1] + 1000)})
+                try:
+                    controller.tick()
+                except MeterError:
+                    pass
+                else:
+                    raise RuntimeError('inconsistent panel usage did not revoke runtime')
+                assert not server_lease.exists()
+                print('real panel/accounting mismatch revoked runtime lease', flush=True)
             stop.set()
             refresher.join()
             deadline = time.monotonic() + 10
