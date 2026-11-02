@@ -5,11 +5,11 @@ import subprocess
 import tempfile
 import threading
 import time
-import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from vpngate_bridge.collector import collect
 from vpngate_bridge.meter import CounterLedger
+from vpngate_bridge.process import docker_epoch
 
 IMAGE = 'vpngate-sing-box'
 IDENTITY = 'bf000d23-0752-40b4-affe-68f7707a9661'
@@ -50,14 +50,14 @@ def main():
             else:
                 raise RuntimeError('local VLESS transfer failed')
             ledger = CounterLedger(root / 'meter.sqlite')
-            epoch = str(uuid.uuid4())
+            epoch = docker_epoch(containers[0])
             ledger.begin(epoch, ['alice'])
             diagnostic = subprocess.run(['grpcurl', '-plaintext', '-import-path', str(Path(os.environ['STATS_PROTO']).parent), '-proto', 'stats.proto', '-d', '{"patterns":["user>>>"],"reset":false}', '127.0.0.1:10085', 'v2ray.core.app.stats.command.StatsService/QueryStats'], capture_output=True, text=True)
             print('test RPC status:', diagnostic.returncode, 'response:', diagnostic.stdout[:2000], 'error:', diagnostic.stderr[:2000], flush=True)
-            collect(ledger, epoch, '127.0.0.1:10085', os.environ['STATS_PROTO'], ['alice'], lambda: epoch)
+            collect(ledger, epoch, '127.0.0.1:10085', os.environ['STATS_PROTO'], ['alice'], lambda: docker_epoch(containers[0]))
             usage = ledger.usage('alice')
             assert usage is not None and usage[0] > 0 and usage[1] >= 65536, usage
-            collect(ledger, epoch, '127.0.0.1:10085', os.environ['STATS_PROTO'], ['alice'], lambda: epoch)
+            collect(ledger, epoch, '127.0.0.1:10085', os.environ['STATS_PROTO'], ['alice'], lambda: docker_epoch(containers[0]))
             assert ledger.usage('alice') == usage, 'repeated collection double counted usage'
             print('real VLESS transfer, gRPC collection and idempotent persistence passed')
     finally:
