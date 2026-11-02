@@ -73,3 +73,36 @@ class PoolTests(unittest.TestCase):
             with patch('vpngate_bridge.pool.probe', return_value=Measurement('US', 'US', '9.9.9.9', False, (100,)*3, 1, 1)):
                 pool.replace(us, ())
                 with self.assertRaises(ValueError): pool.replace(Candidate('4.2.2.2', 'GB', 1, 1, 'x'), ())
+
+    def test_close_withdraws_before_cleanup_and_rejects_reactivation(self):
+        from unittest.mock import Mock
+        first, second = Mock(), Mock()
+        first.__exit__ = Mock(side_effect=OSError('cleanup failed'))
+        second.__exit__ = Mock()
+        published = Mock()
+        pool = GatewayPool(None, None, None, 2, published)
+        pool._active = {'JP': (None, first), 'US': (None, second)}
+        with self.assertRaisesRegex(OSError, 'cleanup failed'):
+            pool.close()
+        published.assert_called_once_with({})
+        second.__exit__.assert_called_once_with(None, None, None)
+        self.assertEqual(pool.routes(), {})
+        with self.assertRaisesRegex(OSError, "cleanup failed"):
+            pool.close()
+        published.assert_called_once()
+        with self.assertRaisesRegex(RuntimeError, 'closed'):
+            pool.replace(None, ())
+
+    def test_failed_withdrawal_keeps_gateways_for_retry(self):
+        from unittest.mock import Mock
+        context = Mock()
+        context.__exit__ = Mock()
+        published = Mock(side_effect=[RuntimeError('publisher unavailable'), None])
+        pool = GatewayPool(None, None, None, 1, published)
+        pool._active = {'JP': (None, context)}
+        with self.assertRaisesRegex(RuntimeError, 'publisher unavailable'):
+            pool.close()
+        context.__exit__.assert_not_called()
+        self.assertIn('JP', pool.routes())
+        pool.close()
+        context.__exit__.assert_called_once()

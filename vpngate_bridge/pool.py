@@ -25,6 +25,8 @@ class GatewayPool:
         self.gateways, self.ports, self.api_key = gateways, ports, api_key
         self.max_countries, self.publish = max_countries, publish
         self._active = {}
+        self._closed = False
+        self._close_error = None
         self._lock = threading.RLock()
 
     def routes(self):
@@ -33,6 +35,8 @@ class GatewayPool:
 
     def replace(self, candidate, blocked, *, expected_absent=False):
         with self._lock:
+            if self._closed:
+                raise RuntimeError("gateway pool is closed")
             code = candidate.country
             if expected_absent and code in self._active:
                 raise ValueError('country was concurrently activated')
@@ -82,3 +86,23 @@ class GatewayPool:
             del self._active[country]
             previous[1].__exit__(None, None, None)
             return True
+
+    def close(self):
+        """Withdraw routes before attempting every gateway cleanup."""
+        with self._lock:
+            if self._closed:
+                if self._close_error is not None:
+                    raise self._close_error
+                return
+            self.publish({})
+            self._closed = True
+            contexts = [context for _, context in self._active.values()]
+            self._active.clear()
+            for context in contexts:
+                try:
+                    context.__exit__(None, None, None)
+                except Exception as exc:
+                    if self._close_error is None:
+                        self._close_error = exc
+            if self._close_error is not None:
+                raise self._close_error
