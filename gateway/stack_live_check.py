@@ -82,8 +82,11 @@ def main():
         'client': {'id': identity, 'email': 'stack-ci', 'subId': 'stack-ci', 'enable': True,
                    'totalGB': 10000000, 'expiryTime': 0}, 'inboundIds': [inbound['id']],
     })
-    candidates = [candidate for group in fetch().values() for candidate in group]
+    grouped = fetch()
+    candidates = [candidate for group in grouped.values() for candidate in group]
     random.shuffle(candidates)
+    # Prefer a dynamically discovered country with enough volunteers for replacement.
+    candidates.sort(key=lambda candidate: -len(grouped[candidate.country]))
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         host = subprocess.check_output(['docker', 'network', 'inspect', '--format',
@@ -104,7 +107,7 @@ def main():
             endpoint = router.countries()[0]
             if exit_ip(endpoint.socks_port, endpoint.socks_host) != route.exit_ip:
                 raise RuntimeError('private router did not preserve the selected gateway exit')
-            check_stack(root, route, panel, identity, direct, pool, router, candidate)
+            check_stack(root, route, panel, identity, direct, pool, router, candidates)
         finally:
             try:
                 pool.close()
@@ -112,7 +115,7 @@ def main():
                 router.close()
 
 
-def check_stack(root, route, panel, identity, direct, pool, router, candidate):
+def check_stack(root, route, panel, identity, direct, pool, router, candidates):
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                     '-keyout', str(root / 'key.pem'), '-out', str(root / 'cert.pem'),
                     '-subj', '/CN=bridge.test', '-addext', 'subjectAltName=DNS:bridge.test', '-days', '1'],
@@ -210,7 +213,18 @@ def check_stack(root, route, panel, identity, direct, pool, router, candidate):
             if actual != route.exit_ip or actual == direct:
                 raise RuntimeError('subscribed client bypassed the selected gateway')
             print(urlsplit(link).scheme + ' TLS verified; selected VPNGate exit matched', flush=True)
-        replacement = pool.replace(candidate, ())
+        replacements = [candidate for candidate in candidates
+                        if candidate.country == route.country and candidate.ip != route.server_ip]
+        for candidate in replacements[:6]:
+            try:
+                replacement = pool.replace(candidate, ())
+                break
+            except (ProbeError, ValueError) as exc:
+                if pool.routes().get(route.country) != route or router.countries() != countries:
+                    raise RuntimeError('failed staging changed the active route') from exc
+                print(f'replacement candidate rejected; old route retained: {exc}', flush=True)
+        else:
+            raise RuntimeError('no second qualified same-country relay available')
         if router.countries() != countries or docker_epoch(server) != epoch:
             raise RuntimeError('gateway replacement changed listeners or restarted sing-box')
         for port in (1081, 1082):
