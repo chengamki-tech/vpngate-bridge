@@ -1,7 +1,9 @@
 """Run the actual service with a bounded, live-discovered acceptance candidate set."""
 import base64
 import json
+import logging
 import os
+import random
 import socket
 import subprocess
 import tempfile
@@ -19,6 +21,7 @@ from vpngate_bridge.service import parser, serve
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     panel = Panel(os.environ['PANEL_URL'], 'vgb-ci', 'vgb-ci-password')
     for attempt in range(30):
         try:
@@ -38,7 +41,8 @@ def main():
         'totalGB': 10000000, 'expiryTime': 0}, 'inboundIds': [inbound['id']]})
     grouped = fetch()
     country = max(grouped, key=lambda code: len(grouped[code]))
-    candidates = {country: grouped[country][:6]}
+    random.shuffle(grouped[country])
+    candidates = {country: grouped[country][:8]}
     direct = exit_ip()
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
