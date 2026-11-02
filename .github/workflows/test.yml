@@ -28,4 +28,5 @@ jobs:
           python-version: '3.11'
       - run: mkdir -p /tmp/vpngate-bridge-ci && openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/vpngate-bridge-ci/key.pem -out /tmp/vpngate-bridge-ci/cert.pem -subj /CN=localhost -days 1 2>/dev/null
       - run: python -m gateway.bridge_fixture
-      - run: docker run --rm -v /tmp/vpngate-bridge-ci:/work:ro ghcr.io/sagernet/sing-box:v1.14.4 check -c /work/config.json
+      - run: docker build -f bridge/Dockerfile -t vpngate-sing-box .
+      - run: docker run --rm -v /tmp/vpngate-bridge-ci:/work:ro vpngate-sing-box check -c /work/config.json

@@ -11,7 +11,7 @@ from pathlib import Path
 from vpngate_bridge.collector import collect
 from vpngate_bridge.meter import CounterLedger
 
-IMAGE = 'ghcr.io/sagernet/sing-box:v1.14.4'
+IMAGE = 'vpngate-sing-box'
 IDENTITY = 'bf000d23-0752-40b4-affe-68f7707a9661'
 
 
