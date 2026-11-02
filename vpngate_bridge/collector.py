@@ -20,7 +20,7 @@ def read_counters(endpoint, proto_path, users):
         raise ValueError('unique configured users required')
     result = {name: [0, 0] for name in names}
     command = ['grpcurl', '-plaintext', '-max-time', '5', '-import-path', str(path.parent), '-proto', path.name,
-               '-d', '{"patterns":["user>>>"],"reset":false}', endpoint, 'experimental.v2rayapi.StatsService/QueryStats']
+               '-d', '{"patterns":["user>>>"],"reset":false}', endpoint, 'v2ray.core.app.stats.command.StatsService/QueryStats']
     try:
         response = subprocess.run(command, check=True, capture_output=True, text=True, timeout=6)
         payload = json.loads(response.stdout)

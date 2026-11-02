@@ -17,8 +17,7 @@ jobs:
           go-version: '1.25'
       - run: go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.4
       - run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - run: curl -fsSL https://raw.githubusercontent.com/SagerNet/sing-box/v1.14.4/experimental/v2rayapi/stats.proto -o /tmp/stats.proto
       - run: docker build -f bridge/Dockerfile -t vpngate-sing-box .
       - run: python -m gateway.meter_live_check
         env:
-          STATS_PROTO: /tmp/stats.proto
+          STATS_PROTO: ${{ github.workspace }}/bridge/stats.proto

@@ -52,7 +52,7 @@ def main():
             ledger = CounterLedger(root / 'meter.sqlite')
             epoch = str(uuid.uuid4())
             ledger.begin(epoch, ['alice'])
-            diagnostic = subprocess.run(['grpcurl', '-plaintext', '-import-path', '/tmp', '-proto', 'stats.proto', '-d', '{"patterns":["user>>>"],"reset":false}', '127.0.0.1:10085', 'experimental.v2rayapi.StatsService/QueryStats'], capture_output=True, text=True)
+            diagnostic = subprocess.run(['grpcurl', '-plaintext', '-import-path', str(Path(os.environ['STATS_PROTO']).parent), '-proto', 'stats.proto', '-d', '{"patterns":["user>>>"],"reset":false}', '127.0.0.1:10085', 'v2ray.core.app.stats.command.StatsService/QueryStats'], capture_output=True, text=True)
             print('test RPC status:', diagnostic.returncode, 'response:', diagnostic.stdout[:2000], 'error:', diagnostic.stderr[:2000], flush=True)
             collect(ledger, epoch, '127.0.0.1:10085', os.environ['STATS_PROTO'], ['alice'], lambda: epoch)
             usage = ledger.usage('alice')

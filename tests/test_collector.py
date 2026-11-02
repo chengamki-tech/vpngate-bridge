@@ -16,6 +16,7 @@ class CollectorTests(unittest.TestCase):
             rows = [{'name': 'user>>>alice>>>traffic>>>uplink', 'value': '123'}]
             with patch('vpngate_bridge.collector.subprocess.run', return_value=SimpleNamespace(stdout=json.dumps({'stat': rows}))) as run:
                 self.assertEqual(read_counters('127.0.0.1:10085', proto, ['alice']), {'alice': (123, 0)})
+                self.assertIn('v2ray.core.app.stats.command.StatsService/QueryStats', str(run.call_args))
                 self.assertIn('"reset":false', str(run.call_args))
                 self.assertIn('"patterns":["user>>>"]', str(run.call_args))
             for invalid in [rows + rows, [{'name': rows[0]['name'], 'value': '-1'}], [{'name': 'user>>>bob>>>traffic>>>uplink', 'value': '1'}]]:
