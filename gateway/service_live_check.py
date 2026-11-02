@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import socket
+import ssl
 import subprocess
 import tempfile
 import threading
@@ -48,7 +49,7 @@ def main():
         root = Path(directory)
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                         '-keyout', str(root / 'key.pem'), '-out', str(root / 'cert.pem'),
-                        '-subj', '/CN=bridge.test', '-addext', 'subjectAltName=DNS:bridge.test', '-days', '1'],
+                        '-subj', '/CN=bridge.test', '-addext', 'subjectAltName=DNS:bridge.test,IP:127.0.0.1', '-days', '1'],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         binary = root / 'sing-box'
         with binary.open('wb') as output:
@@ -60,6 +61,7 @@ def main():
                                     '--key', str(root / 'key.pem'), '--listen', '127.0.0.1',
                                     '--subscription-port', '0', '--max-countries', '1'])
         stop, errors, clients = threading.Event(), [], []
+        frontend = None
 
         def run():
             try:
@@ -83,10 +85,35 @@ def main():
                     time.sleep(.5)
                 ready = json.loads(access.read_text())
                 route = json.loads((args.state_dir / 'routes.json').read_text())['countries'][country]
-                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-                url = 'http://' + ready['listen'] + ready['subscriptions']['service-ci']
-                with opener.open(url, timeout=15) as response:
-                    links = base64.b64decode(response.read(), validate=True).decode().splitlines()
+                proxy = (Path(__file__).resolve().parent.parent / 'deploy' / 'nginx.conf').read_text()
+                proxy = proxy.replace('listen 80;', 'listen 127.0.0.1:80;').replace(
+                    'listen 443 ssl;', 'listen 127.0.0.1:443 ssl;').replace(
+                    'bridge.example.com', 'bridge.test').replace('127.0.0.1:8080', ready['listen'])
+                (root / 'nginx.conf').write_text(proxy)
+                mounts = ['--mount', f'type=bind,src={root / "nginx.conf"},dst=/etc/nginx/conf.d/default.conf,readonly',
+                          '--mount', f'type=bind,src={root / "cert.pem"},dst=/etc/vpngate-bridge/tls/fullchain.pem,readonly',
+                          '--mount', f'type=bind,src={root / "key.pem"},dst=/etc/vpngate-bridge/tls/privkey.pem,readonly']
+                subprocess.run(['docker', 'run', '--rm', '--entrypoint', 'nginx', *mounts,
+                                'nginx:stable-alpine', '-t'], check=True)
+                frontend = subprocess.check_output(['docker', 'run', '-d', '--network', 'host',
+                                                     '--entrypoint', 'nginx', *mounts,
+                                                     'nginx:stable-alpine', '-g', 'daemon off;'], text=True).strip()
+                context = ssl.create_default_context(cafile=str(root / 'cert.pem'))
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                                     urllib.request.HTTPSHandler(context=context))
+                url = 'https://127.0.0.1/sub/' + ready['subscriptions']['service-ci'].rsplit('/', 1)[1]
+                for attempt in range(20):
+                    try:
+                        with opener.open(url, timeout=15) as response:
+                            links = base64.b64decode(response.read(), validate=True).decode().splitlines()
+                        break
+                    except urllib.error.HTTPError:
+                        raise
+                    except urllib.error.URLError:
+                        if attempt == 19:
+                            raise
+                        time.sleep(.1)
+                print('actual service: verified HTTPS subscription through deployment Nginx template', flush=True)
                 if len(links) != 2:
                     raise RuntimeError('service subscription missing a protocol')
                 for index, link in enumerate(links):
@@ -118,8 +145,13 @@ def main():
                         raise RuntimeError('service failed to synchronize client traffic')
                     time.sleep(.5)
                 print('actual service: real client usage synchronized to 3x-ui', flush=True)
+                logs = subprocess.check_output(['docker', 'logs', frontend], stderr=subprocess.STDOUT, text=True)
+                if any(path in logs for path in ready['subscriptions'].values()):
+                    raise RuntimeError('reverse proxy logged subscription credentials')
             finally:
                 stop.set()
+                if frontend is not None:
+                    subprocess.run(['docker', 'rm', '-f', frontend], stdout=subprocess.DEVNULL)
                 worker.join(timeout=120)
                 for client in clients:
                     client.terminate()

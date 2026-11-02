@@ -1,0 +1,21 @@
+[Unit]
+Description=Experimental VPNGate bridge controller
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vpngate-bridge
+EnvironmentFile=/etc/vpngate-bridge/panel.env
+StateDirectory=vpngate-bridge
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/bin/python3 -m vpngate_bridge.service --state-dir /var/lib/vpngate-bridge --network vgb-private --hostname bridge.example.com --certificate /etc/vpngate-bridge/tls/fullchain.pem --key /etc/vpngate-bridge/tls/privkey.pem
+# Restart recovery and final drained accounting are not implemented yet.
+Restart=no
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target

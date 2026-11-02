@@ -1,0 +1,51 @@
+# Experimental Linux deployment
+
+The service now joins discovery, measured selection, gateway activation, stable private routing, sing-box leases, subscriptions and the ten-minute healer. It is not production-ready: the fixed client roster cannot be reconfigured without a drained accounting transition, and stopped/crashed bridge epochs require reconciliation before another start. Do not delete the ledger to bypass that check. The systemd template deliberately uses `Restart=no`.
+
+## Prerequisites
+
+- Linux with local rootful Docker, `/dev/net/tun`, Python 3.9+, curl, iproute2 and grpcurl on the controller PATH. Docker access grants host-level privileges.
+- A 3x-ui management-only panel with **every inbound disabled**, pre-created VLESS clients, and HTTPS access (numeric loopback HTTP is supported). Existing panel traffic must agree with the preserved local ledger; a fresh installation cannot silently adopt nonzero usage.
+- A domain pointing to the controller and its valid PEM certificate/private key, readable by the controller UID. TLS issuance and rotation are not automated. The bridge currently bind-mounts the selected certificate/key files; replacing symlinks or inodes does not constitute a tested certificate renewal procedure.
+
+Build the two images and create the private bridge network:
+
+```sh
+docker build -f gateway/Dockerfile -t vpngate-gateway .
+docker build -f bridge/Dockerfile -t vpngate-sing-box .
+docker network create vgb-private
+go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.4
+```
+
+Ensure grpcurl is also on the systemd service PATH (the template uses the system PATH, not an interactive shell's Go bin directory).
+
+## Foreground evaluation
+
+Supply `PANEL_URL`, `PANEL_USERNAME` and `PANEL_PASSWORD` through the environment. `PANEL_2FA_CODE` optionally supplies the initial one-time login code. Start with loopback listeners on an isolated evaluation host:
+
+```sh
+python3 -m vpngate_bridge.service \
+  --state-dir ./state --network vgb-private \
+  --hostname bridge.example.com \
+  --certificate /etc/vpngate-bridge/tls/fullchain.pem \
+  --key /etc/vpngate-bridge/tls/privkey.pem \
+  --listen 127.0.0.1 --max-countries 8
+```
+
+The state directory must be private (0700). `subscription.key` persists the HMAC signing key, Hysteria2 credential derivation and panel source identity; preserve it with `ports.sqlite3` and `meter.sqlite3`. Never publish state files. `access.json` contains the loopback subscription listener and per-client bearer paths; combine those paths with the public HTTPS origin only after configuring the reverse proxy. The service removes readiness credentials on normal shutdown and before a subsequent startup attempt.
+
+`routes.json` records current private SOCKS endpoints and public country ports. Each gateway is limited to 0.5 CPU and 128 MiB by default; the active-country cap defaults to eight. Flags configure those limits and the country port range. The bridge has a read-only root filesystem, no Linux capabilities, the controller's UID/GID, one CPU, 256 MiB and 128 PIDs. The private TCP router caps streams at 256.
+
+Initial discovery probes the live list serially and may take several minutes. If no country qualifies, startup exits without opening bridge listeners. The fixed initial country set is discovered dynamically; healing can remove/reactivate those countries without changing their subscriptions. Newly discovered countries and panel roster edits need the missing reconfiguration lifecycle.
+
+## Deployment templates
+
+The systemd unit assumes a checkout at `/opt/vpngate-bridge`, state at `/var/lib/vpngate-bridge`, and a dedicated `vgb-private` Docker network. Replace the example domain and TLS paths. Copy the environment example to `/etc/vpngate-bridge/panel.env`, fill its values, and restrict it to mode 0600. The unit must have a PATH containing docker, curl, ip and grpcurl.
+
+`deploy/nginx.conf` serves only subscriptions on HTTPS port 443 and redirects port 80 to HTTPS. Replace its example domain and certificate paths and match its loopback upstream to `--subscription-port` (8080 by default). Request and error logging are disabled because subscription URLs contain credentials. Validate with `nginx -t` before reloading. The controller defaults to IPv4 public bridge listeners; VLESS/WS/TLS country ports need TCP, Hysteria2 ports need UDP. Keep the panel, subscription backend, stats endpoint and private SOCKS endpoints off public listeners.
+
+## Stop and recovery boundary
+
+SIGINT/SIGTERM stops subscription admission and lease renewal, waits for the current probe to clean up, and removes owned containers. A failed candidate staging attempt preserves the old active route. Forced controller termination can leave private gateway containers behind; automatic orphan recovery is not implemented. The independent bridge guard expires its lease after at most ten seconds of normal coordinator renewal.
+
+Neither normal bridge shutdown nor a hard crash has a verified final drained counter snapshot. The runtime records an unclean epoch and refuses to reuse it as zero traffic. Panel renewal/reset, operator reconciliation, automatic crash recovery, certificate renewal, destination UDP, dynamic roster updates and long-running load/failover validation remain required before production.
