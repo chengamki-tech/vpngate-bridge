@@ -22,7 +22,7 @@ class Country:
     hy2_port: int
 
 
-def build_config(countries, clients, certificate_path, key_path):
+def build_config(countries, clients, certificate_path, key_path, *, stats_port=10085):
     if not countries or not clients:
         raise ValueError('at least one country and authenticated client are required')
     if any(not isinstance(p, str) or not PurePosixPath(p).is_absolute() for p in (certificate_path, key_path)):
@@ -43,7 +43,9 @@ def build_config(countries, clients, certificate_path, key_path):
         passwords.add(user.password)
         vless_users.append({'name': user.name, 'uuid': ident})
         hy2_users.append({'name': user.name, 'password': user.password})
-    codes, ports = set(), set()
+    if type(stats_port) is not int or not 1 <= stats_port <= 65535:
+        raise ValueError('invalid stats port')
+    codes, ports = set(), {stats_port}
     inbounds, outbounds, rules = [], [], []
     tls = {'enabled': True, 'certificate_path': certificate_path, 'key_path': key_path}
     for country in countries:
@@ -72,4 +74,6 @@ def build_config(countries, clients, certificate_path, key_path):
                           'server_port': country.socks_port, 'version': '5', 'network': 'tcp'})
         rules.append({'inbound': ['vless-' + code, 'hy2-' + code], 'outbound': 'socks-' + code})
     rules.append({'action': 'reject'})
-    return {'inbounds': inbounds, 'outbounds': outbounds, 'route': {'rules': rules}}
+    return {'inbounds': inbounds, 'outbounds': outbounds, 'route': {'rules': rules},
+            'experimental': {'v2ray_api': {'listen': f'127.0.0.1:{stats_port}',
+                                            'stats': {'enabled': True, 'users': sorted(names)}}}}
