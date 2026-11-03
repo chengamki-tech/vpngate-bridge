@@ -28,6 +28,10 @@ jobs:
       - run: python -m gateway.service_live_check
         env:
           STATS_PROTO: ${{ github.workspace }}/bridge/stats.proto
+      - run: python -m gateway.recovery_live_check
+        env:
+          PANEL_URL: ${{ env.PANEL_URL }}
+          STATS_PROTO: ${{ github.workspace }}/bridge/stats.proto
       - if: always()
         run: docker rm -f vgb-panel-service || true
       - if: always()

@@ -28,7 +28,7 @@ from .ports import PortRegistry
 from .probe import ClassificationError, ProbeError
 from .coordinator import AccessRevoked
 from .router import GatewayRouter
-from .runtime import open_bridge
+from .runtime import open_bridge, recover_bridges
 from .scanner import scan_ranked
 from .selection import Blacklist
 from .subscription import subscription, subscription_hostname
@@ -113,6 +113,9 @@ def serve(args, stop_event):
         source = str(uuid.uuid5(uuid.NAMESPACE_URL, hmac.new(secret, b'panel-source', hashlib.sha256).hexdigest()))
         panel = Panel(os.environ['PANEL_URL'], os.environ['PANEL_USERNAME'], os.environ['PANEL_PASSWORD'])
         panel.login(two_factor_code=os.environ.get('PANEL_2FA_CODE'))
+        ledger = CounterLedger(args.state_dir / 'meter.sqlite3')
+        proto = Path(__file__).resolve().parent.parent / 'bridge' / 'stats.proto'
+        recover_bridges(panel, ledger, args.state_dir, proto)
         blacklist = Blacklist(args.state_dir / 'blacklist.sqlite3')
         registry = PortRegistry(args.state_dir / 'ports.sqlite3', args.first_port, args.last_port,
                                 {port for port in (args.stats_port, args.subscription_port) if port})
@@ -145,8 +148,6 @@ def serve(args, stop_event):
                 return
             if not pool.routes():
                 raise RuntimeError('no country passed activation checks')
-            ledger = CounterLedger(args.state_dir / 'meter.sqlite3')
-            proto = Path(__file__).resolve().parent.parent / 'bridge' / 'stats.proto'
             current, current_lock = {}, threading.RLock()
 
             def authorize():
