@@ -1,6 +1,7 @@
 """Prove an unclean bridge generation can be finalized after controller loss."""
 import json
 import os
+import socket
 import subprocess
 import tempfile
 import threading
@@ -74,7 +75,7 @@ def main():
             server_path.write_text(json.dumps(server))
             client_path = root / 'client.json'
             client_path.write_text(json.dumps(client_config))
-            renew(run_dir / 'lease.json', run_id, duration=4)
+            renew(run_dir / 'lease.json', run_id, duration=30)
             container = subprocess.check_output([
                 'docker', 'run', '-d', '--name', container_name,
                 '--label', 'org.vpngate-bridge.bridge=' + container_name,
@@ -89,6 +90,15 @@ def main():
                 'source_guid': source, 'identities': {email: [identity, 'recovery-ci']},
                 'status': 'running', 'incarnation': incarnation,
             }))
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                try:
+                    with socket.create_connection(('127.0.0.1', 10086), timeout=.2):
+                        break
+                except OSError:
+                    time.sleep(.1)
+            else:
+                raise RuntimeError('recovery StatsService did not become ready')
             client_container = subprocess.check_output([
                 'docker', 'run', '-d', '--name', 'vgb-recovery-client',
                 '--rm', '--network', 'host',
@@ -137,8 +147,9 @@ def main():
             sync_bridge_usage(panel, ledger, source, {email: (identity, 'recovery-ci')},
                               now=int(time.time()))
 
-            # No renewal simulates controller loss; the in-container guard must stop
-            # sing-box and emit its final counted snapshot by itself.
+            # Removing the lease simulates controller loss; the in-container guard
+            # must stop sing-box and emit its final counted snapshot by itself.
+            (run_dir / 'lease.json').unlink()
             deadline = time.monotonic() + 12
             while time.monotonic() < deadline:
                 running = subprocess.check_output(
@@ -162,8 +173,10 @@ def main():
                   flush=True)
     finally:
         if client_container is not None:
-            subprocess.run(['docker', 'rm', '-f', client_container], stdout=subprocess.DEVNULL)
-        subprocess.run(['docker', 'rm', '-f', container_name], stdout=subprocess.DEVNULL)
+            subprocess.run(['docker', 'rm', '-f', client_container],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(['docker', 'rm', '-f', container_name],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         http.shutdown()
         thread.join()
         http.server_close()
