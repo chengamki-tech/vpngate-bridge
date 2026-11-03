@@ -41,6 +41,21 @@ class CoordinatorTests(unittest.TestCase):
                     controller.tick(now=100)
             self.assertFalse(path.exists())
             ledger.invalidate.assert_called_once()
+    def test_expired_user_triggers_rotation_before_collecting_the_old_roster(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'lease.json'
+            client = PanelClient('alice', 'uuid', 'sub', True, 50, 1000, 0)
+            panel = Mock()
+            panel.clients.return_value = [client]
+            ledger = Mock()
+            controller = LeaseCoordinator(panel, ledger, 'source', {'alice': ('uuid', 'sub')}, 'epoch',
+                                          lambda: 'epoch', '127.0.0.1:1', 'stats.proto', path,
+                                          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+            with patch('vpngate_bridge.coordinator.collect') as collect:
+                with self.assertRaises(AccessRevoked):
+                    controller.tick(now=100)
+                collect.assert_not_called()
+            ledger.invalidate.assert_called_once()
     def test_collection_failure_removes_existing_lease(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'lease.json'
