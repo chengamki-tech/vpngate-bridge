@@ -104,13 +104,18 @@ def serve(args, stop_event):
         context = _docker('context', 'inspect', '--format', '{{.Endpoints.docker.Host}}')
         if (host and not host.startswith('unix://')) or not context.startswith('unix://'):
             raise RuntimeError('a local Docker Unix socket is required')
-        gateways = DockerGateway(args.network, args.gateway_image, args.cpus, args.memory_mb)
+        secret = _secret(args.state_dir / 'subscription.key')
+        source = str(uuid.uuid5(uuid.NAMESPACE_URL, hmac.new(secret, b'panel-source', hashlib.sha256).hexdigest()))
+        # A stable per-state-directory gateway instance id, derived from the
+        # persisted secret with its own HMAC domain. It is not the secret
+        # itself, and it lets a restarted service attribute orphan gateways
+        # to this deployment only, never to another instance on the host.
+        instance_id = str(uuid.uuid5(uuid.NAMESPACE_URL, hmac.new(secret, b'gateway-instance', hashlib.sha256).hexdigest()))
+        gateways = DockerGateway(args.network, args.gateway_image, args.cpus, args.memory_mb, instance_id=instance_id)
         addresses = _docker('network', 'inspect', '--format', '{{range .IPAM.Config}}{{println .Gateway}}{{end}}', args.network)
         bind = next((address for address in addresses.splitlines() if ipaddress.ip_address(address).version == 4), None)
         if bind is None:
             raise ValueError('Docker network has no IPv4 gateway')
-        secret = _secret(args.state_dir / 'subscription.key')
-        source = str(uuid.uuid5(uuid.NAMESPACE_URL, hmac.new(secret, b'panel-source', hashlib.sha256).hexdigest()))
         panel = Panel(os.environ['PANEL_URL'], os.environ['PANEL_USERNAME'], os.environ['PANEL_PASSWORD'])
         panel.login(two_factor_code=os.environ.get('PANEL_2FA_CODE'))
         ledger = CounterLedger(args.state_dir / 'meter.sqlite3')
@@ -119,6 +124,12 @@ def serve(args, stop_event):
         blacklist = Blacklist(args.state_dir / 'blacklist.sqlite3')
         registry = PortRegistry(args.state_dir / 'ports.sqlite3', args.first_port, args.last_port,
                                 {port for port in (args.stats_port, args.subscription_port) if port})
+        # Normal shutdown already removed live gateways through pool.close;
+        # anything still carrying this instance's label is a controller-loss
+        # orphan. Other instances' containers are never listed here.
+        removed = gateways.cleanup_orphans()
+        if removed:
+            logging.info('removed %d orphan gateways from this deployment instance', removed)
         ranked = scan_ranked(fetch(), gateways, os.environ.get('IPAPI_IS_KEY'), blacklist.active(time.time()),
                              blacklist=blacklist, stop_event=stop_event)
         if stop_event.is_set():
