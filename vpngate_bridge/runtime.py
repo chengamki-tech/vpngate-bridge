@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import os
 import re
 import socket
@@ -16,11 +17,12 @@ from pathlib import Path
 from .bridge import Client, build_config
 from .coordinator import AccessRevoked, LeaseCoordinator
 from .docker_gateway import _docker, _remove_owned
+from .final_stats import read_final
 from .lease import renew
 from .meter import MeterError
 from .process import docker_epoch
 from .subscription_http import client_token
-from .sync import sync_bridge_usage
+from .sync import sync_bridge_usage, sync_final_usage
 
 
 @dataclass
@@ -53,9 +55,11 @@ def open_bridge(panel, ledger, source_guid, countries, secret, certificate, key,
         inbound['listen'] = str(address)
     name = 'vgb-bridge-' + uuid.uuid4().hex
     run_id = str(uuid.uuid4())
-    attempted, controller = False, None
+    attempted, container, incarnation = False, None, None
     with tempfile.TemporaryDirectory(prefix='bridge-', dir=paths[2]) as directory:
         root = Path(directory)
+        final_dir = root / 'final'
+        final_dir.mkdir(mode=0o700)
         config_path, lease_path = root / 'config.json', root / 'lease.json'
         descriptor = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, 'w') as output:
@@ -92,6 +96,8 @@ def open_bridge(panel, ledger, source_guid, countries, secret, certificate, key,
             container = _docker('run', '-d', '--name', name, '--label', 'org.vpngate-bridge.bridge=' + name,
                                 '--network', 'host', *isolation, '--cpus', '1', '--memory', '256m', '--pids-limit', '128',
                                 '--mount', f'type=bind,src={root},dst=/run/vgb,readonly',
+                                '--mount', f'type=bind,src={final_dir},dst=/run/vgb-final',
+                                '-e', 'VGB_FINAL_STATS=/run/vgb-final/counters.json',
                                 '-e', 'BRIDGE_RUN_ID=' + run_id, *mounts,
                                 image, 'run', '-c', '/config.json', timeout=30)
             if stop_event is not None and stop_event.is_set():
@@ -120,4 +126,18 @@ def open_bridge(panel, ledger, source_guid, countries, secret, certificate, key,
             lease_path.unlink(missing_ok=True)
             if attempted:
                 ledger.invalidate()
-                _remove_owned(name, 'org.vpngate-bridge.bridge')
+                finalized = False
+                try:
+                    if container is not None and incarnation is not None:
+                        _docker('stop', '--time', '5', container, timeout=10)
+                        if docker_epoch(container, stopped=True) != incarnation:
+                            raise MeterError('bridge incarnation changed during shutdown')
+                        counters = read_final(final_dir / 'counters.json', run_id, identities)
+                        ledger.close(run_id, counters, quiesced=True)
+                        finalized = True
+                        sync_final_usage(panel, ledger, source_guid, run_id, identities)
+                except Exception as exc:
+                    logging.warning('bridge shutdown accounting: %s; final counters %s',
+                                    type(exc).__name__, 'preserved' if finalized else 'unconfirmed')
+                finally:
+                    _remove_owned(name, 'org.vpngate-bridge.bridge')

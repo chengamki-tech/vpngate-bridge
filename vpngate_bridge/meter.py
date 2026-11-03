@@ -116,3 +116,13 @@ class CounterLedger:
             cursor = db.execute('UPDATE meter_state SET clean=1, valid=0 WHERE id=1 AND epoch=? AND clean=0 AND certain=1 AND valid=1', (epoch,))
             if cursor.rowcount != 1:
                 raise MeterError('meter epoch changed during close')
+
+    def closed_totals(self, epoch):
+        """Final accounting data only; closed epochs cannot authorize traffic."""
+        with sqlite3.connect(self.path) as db:
+            db.execute('BEGIN')
+            state = db.execute('SELECT epoch, clean, certain FROM meter_state WHERE id=1').fetchone()
+            if state != (epoch, 1, 1):
+                raise MeterError('a finalized certain meter epoch is required')
+            return {name: (up, down) for name, up, down in db.execute(
+                'SELECT name, total_up, total_down FROM meter_users WHERE active=1')}

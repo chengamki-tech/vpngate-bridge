@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import Mock
 from vpngate_bridge.panel import PanelClient, PanelError
 from vpngate_bridge.meter import MeterError
-from vpngate_bridge.sync import sync_bridge_usage
+from vpngate_bridge.sync import sync_bridge_usage, sync_final_usage
 
 
 class SyncTests(unittest.TestCase):
@@ -15,6 +15,13 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(sync_bridge_usage(panel, ledger, 'source', ['alice'], now=100), [client])
         panel.push_global_totals.assert_called_once_with('source', {'alice': (100, 200)})
         ledger.invalidate.assert_not_called()
+        panel.push_global_totals.reset_mock()
+        with self.assertRaises(PanelError):
+            sync_bridge_usage(panel, ledger, 'source', {'alice': ('changed', 'sub')}, now=100)
+        panel.push_global_totals.assert_not_called()
+        ledger.closed_totals.return_value = {'alice': (100, 200)}
+        sync_final_usage(panel, ledger, 'source', 'epoch', {'alice': ('id', 'sub')})
+        panel.push_global_totals.assert_called_once_with('source', {'alice': (100, 200)})
     def test_unknown_usage_or_active_xray_inbound_fails_closed(self):
         panel, ledger = Mock(), Mock()
         panel._request.return_value = {'obj': [{'enable': True}]}

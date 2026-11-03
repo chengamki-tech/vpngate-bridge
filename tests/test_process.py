@@ -17,4 +17,12 @@ class ProcessTests(unittest.TestCase):
             self.assertNotEqual(docker_epoch('a' * 64), first)
             state['Running'] = False
             with self.assertRaises(MeterError): docker_epoch('a' * 64)
+            state.update(Pid=0, OOMKilled=False, Dead=False, ExitCode=143)
+            stopped = docker_epoch('a' * 64, stopped=True)
+            state['ExitCode'] = 137
+            with self.assertRaises(MeterError): docker_epoch('a' * 64, stopped=True)
+            state.update(ExitCode=1, OOMKilled=True)
+            with self.assertRaises(MeterError): docker_epoch('a' * 64, stopped=True)
+            state['OOMKilled'] = False
+            self.assertEqual(docker_epoch('a' * 64, stopped=True), stopped)
         with self.assertRaises(ValueError): docker_epoch('mutable-name')

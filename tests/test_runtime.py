@@ -3,6 +3,7 @@ import os
 import unittest
 import uuid
 import threading
+import json
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
@@ -126,4 +127,15 @@ class RuntimeTests(unittest.TestCase):
             with self.runtime():
                 self.fail('changed process entered runtime')
         self.cleanup.assert_called_once()
+        self.assertIsNone(self.ledger.usage('alice'))
+
+    def test_verified_final_snapshot_allows_restart_without_resetting_cumulative_usage(self):
+        with patch('vpngate_bridge.runtime.sync_final_usage') as publish:
+            for _ in range(2):
+                with self.runtime() as runtime:
+                    final = runtime.coordinator.lease_path.parent / 'final' / 'counters.json'
+                    epoch = runtime.coordinator.meter_epoch
+                    final.write_text(json.dumps({'version': 1, 'run_id': epoch, 'counters': {'alice': [15, 40]}}))
+            self.assertEqual(publish.call_count, 2)
+            self.assertEqual(self.ledger.closed_totals(epoch), {'alice': (30, 80)})
         self.assertIsNone(self.ledger.usage('alice'))
