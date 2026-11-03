@@ -1,6 +1,6 @@
 # Experimental Linux deployment
 
-The service now joins discovery, measured selection, gateway activation, stable private routing, sing-box leases, subscriptions and the ten-minute healer. It is not production-ready: the fixed client roster cannot be reconfigured without a drained accounting transition, and stopped/crashed bridge epochs require reconciliation before another start. Do not delete the ledger to bypass that check. The systemd template deliberately uses `Restart=no`.
+The service now joins discovery, measured selection, gateway activation, stable private routing, sing-box leases, subscriptions and the ten-minute healer. It is not production-ready: the fixed client roster cannot be reconfigured without a drained accounting transition, and crashed bridge epochs require reconciliation before another start. A normally stopped epoch may start again only if its final snapshot validated and closed it clean; otherwise it stays unconfirmed and also requires reconciliation. Do not delete the ledger to bypass that check. The systemd template deliberately uses `Restart=no`.
 
 ## Prerequisites
 
@@ -49,4 +49,4 @@ The systemd unit assumes a checkout at `/opt/vpngate-bridge`, state at `/var/lib
 
 SIGINT/SIGTERM stops subscription admission and lease renewal, waits for the current probe to clean up, and removes owned containers. A failed candidate staging attempt preserves the old active route. Forced controller termination can leave private gateway containers behind; automatic orphan recovery is not implemented. The independent bridge guard expires its lease after at most ten seconds of normal coordinator renewal.
 
-Neither normal bridge shutdown nor a hard crash has a verified final drained counter snapshot. The runtime records an unclean epoch and refuses to reuse it as zero traffic. Panel renewal/reset, operator reconciliation, automatic crash recovery, certificate renewal, destination UDP, dynamic roster updates and long-running load/failover validation remain required before production.
+Neither a hard crash nor a normal shutdown without a valid final snapshot has a verified final drained counter snapshot. A normal shutdown now attempts one: the runtime stops the bridge, verifies its incarnation, and closes the epoch clean only after the run-UUID snapshot validates; that step itself has not yet passed live two-generation acceptance. The runtime records an unclean epoch and refuses to reuse it as zero traffic. Panel renewal/reset, operator reconciliation, automatic crash recovery, certificate renewal, destination UDP, dynamic roster updates and long-running load/failover validation remain required before production.
