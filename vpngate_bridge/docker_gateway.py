@@ -80,7 +80,8 @@ class DockerGateway:
         container can be attributed safely, so nothing is removed. A
         container that disappears or fails the label checks is skipped
         and logged, not deleted, so a mismatched container can never be
-        removed by accident.
+        removed by accident. Containers with no instance label at all are
+        counted as legacy and logged, never deleted.
         """
         if self.instance_id is None:
             return 0
@@ -98,6 +99,23 @@ class DockerGateway:
                 logging.warning('skipping gateway container without matching ownership label')
                 continue
             removed += 1
+        # Containers created before this label existed, or by a scan without
+        # an instance id, carry no instance label and therefore cannot be
+        # attributed to any deployment. They are logged, never deleted here,
+        # so a legacy container belonging to another instance is not
+        # removed by mistake; an operator can review them instead.
+        legacy = 0
+        for name in [name for name in _docker('ps', '--format', '{{.Names}}',
+                                              '--filter', 'label=org.vpngate-bridge.probe').splitlines()
+                     if name.strip()]:
+            try:
+                label = _label(name, INSTANCE_LABEL)
+            except GatewayError:
+                continue
+            if label in (None, '', '<no value>'):
+                legacy += 1
+        if legacy:
+            logging.warning('found %d legacy gateway containers without instance label; not removed automatically', legacy)
         return removed
 
     @contextmanager
