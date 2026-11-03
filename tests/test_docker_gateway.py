@@ -77,3 +77,23 @@ class DockerGatewayTests(unittest.TestCase):
             gateway = DockerGateway('private-net')
             self.assertEqual(gateway.cleanup_orphans(), 0)
         self.assertEqual(docker.call_count, 1)
+
+    def test_cleanup_orphans_logs_legacy_containers_without_deleting_them(self):
+        calls = []
+        def docker(*args, **kwargs):
+            calls.append(args)
+            if args[0] == 'network': return 'bridge'
+            if args[0] == 'ps':
+                if any('org.vpngate-bridge.instance=' in arg for arg in args):
+                    return ''
+                return 'vgb-probe-legacy\n'
+            if args[0] == 'inspect' and 'org.vpngate-bridge.instance' in args[2]:
+                return '<no value>'
+            if args[0] == 'inspect': return args[-1]
+            return ''
+        with patch('vpngate_bridge.docker_gateway._docker', side_effect=docker):
+            gateway = DockerGateway('private-net', instance_id='instance-1')
+            with self.assertLogs(level='WARNING') as logs:
+                self.assertEqual(gateway.cleanup_orphans(), 0)
+        self.assertTrue(any('legacy' in record for record in logs.output))
+        self.assertEqual([call for call in calls if call[0] == 'rm'], [])

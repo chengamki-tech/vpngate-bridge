@@ -112,6 +112,7 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'no qualified'):
             serve(self.args, threading.Event())
         self.runtime.assert_not_called()
+        self.gateway.cleanup_orphans.assert_called()
         self.scan.return_value = [(self.candidate, self.measurement)]
         self.controller.tick.side_effect = MeterError('uncertain ledger')
         with self.assertRaises(MeterError):
