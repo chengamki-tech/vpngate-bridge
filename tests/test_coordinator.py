@@ -13,8 +13,10 @@ class CoordinatorTests(unittest.TestCase):
             path = Path(directory) / 'lease.json'
             ledger = Mock()
             client = PanelClient('alice', 'uuid', 'sub', True, 0, 1000, 0)
+            panel = Mock()
+            panel.clients.return_value = [client]
             run_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
-            controller = LeaseCoordinator(Mock(), ledger, 'source', {'alice': ('uuid', 'sub')}, 'epoch', lambda: 'epoch', '127.0.0.1:1', 'stats.proto', path, run_id)
+            controller = LeaseCoordinator(panel, ledger, 'source', {'alice': ('uuid', 'sub')}, 'epoch', lambda: 'epoch', '127.0.0.1:1', 'stats.proto', path, run_id)
             with patch('vpngate_bridge.coordinator.collect'), patch('vpngate_bridge.coordinator.sync_bridge_usage', return_value=[client]) as sync:
                 self.assertEqual(controller.tick(now=100), [client])
                 self.assertTrue(valid(path, run_id))
@@ -22,12 +24,33 @@ class CoordinatorTests(unittest.TestCase):
                 with self.assertRaises(AccessRevoked): controller.tick(now=101)
                 self.assertFalse(path.exists())
                 ledger.invalidate.assert_called_once()
+    def test_detects_newly_authorized_panel_client_even_when_fixed_users_still_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'lease.json'
+            client = PanelClient('alice', 'uuid', 'sub', True, 0, 1000, 0)
+            added = PanelClient('bob', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'bob-sub', True, 0, 1000, 0)
+            panel = Mock()
+            panel.clients.return_value = [client, added]
+            ledger = Mock()
+            controller = LeaseCoordinator(panel, ledger, 'source', {'alice': ('uuid', 'sub')}, 'epoch',
+                                          lambda: 'epoch', '127.0.0.1:1', 'stats.proto', path,
+                                          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+            with patch('vpngate_bridge.coordinator.collect'), \
+                    patch('vpngate_bridge.coordinator.sync_bridge_usage', return_value=[client]):
+                with self.assertRaises(AccessRevoked):
+                    controller.tick(now=100)
+            self.assertFalse(path.exists())
+            ledger.invalidate.assert_called_once()
     def test_collection_failure_removes_existing_lease(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'lease.json'
             path.write_text('stale')
             ledger = Mock()
-            controller = LeaseCoordinator(Mock(), ledger, 'source', {'alice': ('uuid', 'sub')}, 'epoch', lambda: 'epoch', '127.0.0.1:1', 'stats.proto', path, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+            panel = Mock()
+            panel.clients.return_value = [PanelClient('alice', 'uuid', 'sub', True, 0, 1000, 0)]
+            controller = LeaseCoordinator(panel, ledger, 'source', {'alice': ('uuid', 'sub')}, 'epoch',
+                                          lambda: 'epoch', '127.0.0.1:1', 'stats.proto', path,
+                                          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
             with patch('vpngate_bridge.coordinator.collect', side_effect=RuntimeError('unavailable')), patch('vpngate_bridge.coordinator.sync_bridge_usage') as sync:
                 with self.assertRaises(RuntimeError): controller.tick(now=100)
                 sync.assert_not_called()

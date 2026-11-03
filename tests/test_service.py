@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 
 from vpngate_bridge.bridge import Client, Country, build_config
 from vpngate_bridge.fetcher import Candidate
+from vpngate_bridge.coordinator import AccessRevoked
 from vpngate_bridge.meter import MeterError
 from vpngate_bridge.panel import PanelClient
 from vpngate_bridge.selection import Measurement
@@ -55,6 +56,7 @@ class ServiceTests(unittest.TestCase):
         self.controller = Mock()
         self.controller.tick.return_value = [self.client]
         self.active, self.stopped, self.sources = False, False, []
+        self.generation, self.generation_clients = 0, []
 
     def tearDown(self):
         self.stack.close()
@@ -67,8 +69,11 @@ class ServiceTests(unittest.TestCase):
     @contextmanager
     def bridge_context(self, panel, ledger, source, countries, secret, *args, **kwargs):
         self.sources.append((source, secret))
+        self.generation += 1
         self.active = True
-        config = build_config(countries, [Client(self.client.email, self.client.uuid, 'long-private-password')],
+        clients = self.generation_clients[self.generation - 1] if self.generation_clients else [self.client]
+        config = build_config(countries, [Client(client.email, client.uuid, 'long-private-password-' + client.email)
+                                          for client in clients],
                               '/cert.pem', '/key.pem')
         try:
             yield SimpleNamespace(config=config, coordinator=self.controller)
@@ -116,6 +121,28 @@ class ServiceTests(unittest.TestCase):
         self.controller.revoke.assert_called()
         self.router.publish.assert_any_call({})
         self.router.close.assert_called_once()
+
+    def test_reconciles_added_or_expired_clients_by_finalizing_and_reopening_a_generation(self):
+        added = PanelClient('bob', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'bob-sub', True, 0, 1000000, 0)
+        self.generation_clients = [[self.client], [self.client, added]]
+        calls = []
+        def tick():
+            calls.append(self.generation)
+            if len(calls) == 1:
+                return [self.client]
+            if len(calls) == 2:
+                raise AccessRevoked('panel roster changed')
+            if len(calls) == 3:
+                return [self.client, added]
+            self.stop.set()
+            return [self.client, added]
+        self.controller.tick.side_effect = tick
+        self.stop = threading.Event()
+        serve(self.args, self.stop)
+        self.assertEqual(self.generation, 2)
+        self.assertEqual(self.runtime.call_count, 2)
+        self.assertEqual(self.sources[0], self.sources[1])
+        self.assertFalse((self.state / 'access.json').exists())
 
     def test_state_lock_prevents_concurrent_service_and_canceled_activation_never_launches(self):
         self.state.mkdir(mode=0o700)

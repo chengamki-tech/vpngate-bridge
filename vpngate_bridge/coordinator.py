@@ -36,6 +36,13 @@ class LeaseCoordinator:
             now = int(time.time())
         with self._lock:
             try:
+                roster = {
+                    client.email: (client.uuid, client.sub_id)
+                    for client in self.panel.clients()
+                    if client.authorized(now_ms=now * 1000, unreported_bridge_bytes=0)
+                }
+                if roster != self.identities:
+                    raise AccessRevoked('panel roster changed')
                 collect(self.ledger, self.meter_epoch, self.endpoint, self.proto_path,
                         self.identities, self.process_epoch, now=now)
                 eligible = sync_bridge_usage(self.panel, self.ledger, self.source_guid, self.identities, now=now)

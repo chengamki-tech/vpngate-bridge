@@ -76,6 +76,9 @@ def main():
     panel._request('panel/api/clients/add', {'client': {
         'id': str(uuid.uuid4()), 'email': 'service-ci', 'subId': 'service-ci', 'enable': True,
         'totalGB': 10000000, 'expiryTime': 0}, 'inboundIds': [inbound['id']]})
+
+    def managed_client(email):
+        return next(client for client in panel.clients() if client.email == email)
     grouped = fetch()
     batches = ordered_batches(grouped)
     if not batches:
@@ -189,13 +192,38 @@ def main():
                                     raise RuntimeError('service client did not use the selected VPNGate exit')
                                 print(f'actual service: protocol {index + 1} imported and exit matched', flush=True)
                             deadline = time.monotonic() + 15
-                            while panel.clients()[0].panel_bytes <= previous_usage:
+                            while managed_client('service-ci').panel_bytes <= previous_usage:
                                 if errors:
                                     raise errors[0]
                                 if time.monotonic() > deadline:
                                     raise RuntimeError('service failed to synchronize client traffic')
                                 time.sleep(.5)
                             print('actual service: real client usage synchronized to 3x-ui', flush=True)
+                            if round_index == 0:
+                                added_email = 'service-ci-added'
+                                panel._request('panel/api/clients/add', {'client': {
+                                    'id': str(uuid.uuid4()), 'email': added_email, 'subId': 'service-ci-added',
+                                    'enable': True, 'totalGB': 10000000, 'expiryTime': 0,
+                                }, 'inboundIds': [inbound['id']]})
+                                deadline = time.monotonic() + 30
+                                while True:
+                                    if errors:
+                                        raise errors[0]
+                                    try:
+                                        ready = json.loads(access.read_text())
+                                    except FileNotFoundError:
+                                        ready = {}
+                                    if added_email in ready.get('subscriptions', {}):
+                                        break
+                                    if time.monotonic() > deadline:
+                                        raise RuntimeError('service did not reconcile added 3x-ui client')
+                                    time.sleep(.5)
+                                added_url = 'https://127.0.0.1/sub/' + ready['subscriptions'][added_email].rsplit('/', 1)[1]
+                                with opener.open(added_url, timeout=15) as response:
+                                    added_links = base64.b64decode(response.read(), validate=True).decode().splitlines()
+                                if len(added_links) != 2:
+                                    raise RuntimeError('added client subscription missing a protocol')
+                                print('actual service: added 3x-ui client reconciled without service restart', flush=True)
                             logs = subprocess.check_output(['docker', 'logs', frontend], stderr=subprocess.STDOUT, text=True)
                             if any(path in logs for path in ready['subscriptions'].values()):
                                 raise RuntimeError('reverse proxy logged subscription credentials')
@@ -231,7 +259,7 @@ def main():
                             raise RuntimeError('normal service shutdown did not produce a verified final snapshot')
                         totals = CounterLedger(args.state_dir / 'meter.sqlite3').closed_totals(epoch)
                         usage = sum(totals['service-ci'])
-                        if usage <= previous_usage or panel.clients()[0].panel_bytes != usage:
+                        if usage <= previous_usage or managed_client('service-ci').panel_bytes != usage:
                             raise RuntimeError('final service counters were reset or not synchronized')
                         previous_usage, previous_links, previous_paths = usage, links, ready['subscriptions']
                         print(f'actual service round {round_index + 1}: final counters preserved and synchronized', flush=True)

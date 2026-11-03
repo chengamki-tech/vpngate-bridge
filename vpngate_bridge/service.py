@@ -147,53 +147,84 @@ def serve(args, stop_event):
                 raise RuntimeError('no country passed activation checks')
             ledger = CounterLedger(args.state_dir / 'meter.sqlite3')
             proto = Path(__file__).resolve().parent.parent / 'bridge' / 'stats.proto'
-            with open_bridge(panel, ledger, source, router.countries(), secret, args.certificate, args.key,
-                             args.state_dir, proto, image=args.bridge_image, listen=str(args.listen),
-                             stats_port=args.stats_port, stop_event=stop_event) as runtime:
-                def authorize():
-                    if stop_event.is_set():
-                        raise RuntimeError('service is stopping')
-                    clients = runtime.coordinator.tick()
-                    if stop_event.is_set():
-                        runtime.coordinator.revoke()
-                        raise RuntimeError('service is stopping')
-                    return clients
+            current, current_lock = {}, threading.RLock()
 
-                def render(name):
-                    active = pool.routes()
-                    config = dict(runtime.config)
-                    config['inbounds'] = [row for row in config['inbounds'] if row['tag'].rsplit('-', 1)[1] in active]
-                    return subscription(config, name, args.hostname)
-
-                http = subscription_server(args.subscription_port, secret, authorize, render)
-                http_thread = threading.Thread(target=http.serve_forever, daemon=True)
-                healer = Healer(pool, blacklist, args.state_dir / 'health.sqlite3')
-                healer_thread = threading.Thread(target=healer.run, args=(stop_event,), daemon=True)
-                try:
-                    http_thread.start()
-                    healer_thread.start()
-                    clients = authorize()
-                    _write_access(access_path, {'status': 'ready', 'listen': f'127.0.0.1:{http.server_port}',
-                                               'hostname': args.hostname,
-                                               'subscriptions': {client.email: '/sub/' + client_token(secret, client)
-                                                                 for client in clients}})
-                    logging.info('service ready with %d qualified countries; access details are private', len(pool.routes()))
-                    while not stop_event.is_set():
-                        started = time.monotonic()
-                        if not http_thread.is_alive() or not healer_thread.is_alive():
-                            raise RuntimeError('service worker stopped unexpectedly')
-                        runtime.coordinator.tick()
-                        stop_event.wait(max(0, 5 - (time.monotonic() - started)))
-                finally:
-                    stop_event.set()
+            def authorize():
+                if stop_event.is_set():
+                    raise RuntimeError('service is stopping')
+                with current_lock:
+                    runtime = current.get('runtime')
+                if runtime is None:
+                    raise AccessRevoked('bridge is reconfiguring')
+                clients = runtime.coordinator.tick()
+                if stop_event.is_set():
                     runtime.coordinator.revoke()
-                    access_path.unlink(missing_ok=True)
-                    if http_thread.is_alive():
-                        http.shutdown()
-                        http_thread.join()
-                    http.server_close()
-                    if healer_thread.is_alive():
-                        healer_thread.join()
+                    raise RuntimeError('service is stopping')
+                return clients
+
+            def render(name):
+                with current_lock:
+                    runtime = current.get('runtime')
+                if runtime is None:
+                    raise RuntimeError('bridge is reconfiguring')
+                active = pool.routes()
+                config = dict(runtime.config)
+                config['inbounds'] = [row for row in config['inbounds'] if row['tag'].rsplit('-', 1)[1] in active]
+                return subscription(config, name, args.hostname)
+
+            http = subscription_server(args.subscription_port, secret, authorize, render)
+            http_thread = threading.Thread(target=http.serve_forever, daemon=True)
+            healer = Healer(pool, blacklist, args.state_dir / 'health.sqlite3')
+            healer_thread = threading.Thread(target=healer.run, args=(stop_event,), daemon=True)
+            try:
+                http_thread.start()
+                healer_thread.start()
+                while not stop_event.is_set():
+                    try:
+                        with open_bridge(panel, ledger, source, router.countries(), secret,
+                                         args.certificate, args.key, args.state_dir, proto,
+                                         image=args.bridge_image, listen=str(args.listen),
+                                         stats_port=args.stats_port, stop_event=stop_event) as runtime:
+                            with current_lock:
+                                current['runtime'] = runtime
+                            clients = runtime.coordinator.tick()
+                            access_path.unlink(missing_ok=True)
+                            _write_access(access_path, {
+                                'status': 'ready', 'listen': f'127.0.0.1:{http.server_port}',
+                                'hostname': args.hostname,
+                                'subscriptions': {
+                                    client.email: '/sub/' + client_token(secret, client)
+                                    for client in clients
+                                },
+                            })
+                            logging.info('service ready with %d qualified countries; access details are private',
+                                         len(pool.routes()))
+                            while not stop_event.is_set():
+                                started = time.monotonic()
+                                if not http_thread.is_alive() or not healer_thread.is_alive():
+                                    raise RuntimeError('service worker stopped unexpectedly')
+                                runtime.coordinator.tick()
+                                stop_event.wait(max(0, 5 - (time.monotonic() - started)))
+                    except AccessRevoked as exc:
+                        with current_lock:
+                            current.clear()
+                        access_path.unlink(missing_ok=True)
+                        logging.info('bridge roster changed; reconciled configuration will retry: %s', exc)
+                        stop_event.wait(1)
+            finally:
+                stop_event.set()
+                with current_lock:
+                    runtime = current.get('runtime')
+                    current.clear()
+                if runtime is not None:
+                    runtime.coordinator.revoke()
+                access_path.unlink(missing_ok=True)
+                if http_thread.is_alive():
+                    http.shutdown()
+                    http_thread.join()
+                http.server_close()
+                if healer_thread.is_alive():
+                    healer_thread.join()
 
 
 def main(argv=None):
