@@ -79,7 +79,10 @@ def main():
             container = subprocess.check_output([
                 'docker', 'run', '-d', '--name', container_name,
                 '--label', 'org.vpngate-bridge.bridge=' + container_name,
-                '--network', 'host', '-e', 'BRIDGE_RUN_ID=' + run_id,
+                '--network', 'host', '--user', f'{os.getuid()}:{os.getgid()}',
+                '--cap-drop=ALL', '--security-opt=no-new-privileges', '--read-only',
+                '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m',
+                '-e', 'BRIDGE_RUN_ID=' + run_id,
                 '-e', 'VGB_FINAL_STATS=/run/vgb-final/counters.json',
                 '-v', f'{run_dir}:/run/vgb:ro', '-v', f'{final_dir}:/run/vgb-final',
                 '-v', f'{server_path}:/config.json:ro', IMAGE, 'run', '-c', '/config.json',
