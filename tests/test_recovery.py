@@ -63,6 +63,8 @@ class RecoveryTests(unittest.TestCase):
         def docker(*args, **kwargs):
             calls.append(args)
             if args[0] == 'ps':
+                return 'e' * 12
+            if args[0] == 'inspect':
                 return 'e' * 64
             return ''
         with patch('vpngate_bridge.runtime._docker', side_effect=docker), \
@@ -73,6 +75,7 @@ class RecoveryTests(unittest.TestCase):
             recover_bridges(self.panel, self.ledger, self.root, self.proto)
         self.assertFalse((self.run_dir / 'lease.json').exists())
         self.assertEqual(calls[0][0], 'ps')
+        self.assertEqual(calls[1], ('inspect', '--format', '{{.Id}}', 'e' * 12))
         self.assertEqual(epoch.call_args_list[0].args[0], 'e' * 64)
         self.assertFalse(self.manifest.exists())
 

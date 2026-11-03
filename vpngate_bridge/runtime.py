@@ -122,6 +122,7 @@ def recover_bridges(panel, ledger, state_dir, proto_path):
             if len(matches) != 1:
                 raise MeterError('ambiguous bridge recovery container')
             container = matches[0].strip()
+            container = _docker('inspect', '--format', '{{.Id}}', container)
             try:
                 stopped = docker_epoch(container, stopped=True)
             except MeterError:
