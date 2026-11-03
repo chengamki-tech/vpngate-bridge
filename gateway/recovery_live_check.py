@@ -101,16 +101,32 @@ def main():
                 raise RuntimeError('recovery StatsService did not become ready')
             client_container = subprocess.check_output([
                 'docker', 'run', '-d', '--name', 'vgb-recovery-client',
-                '--rm', '--network', 'host',
+                '--entrypoint', '/usr/local/bin/sing-box', '--network', 'host',
                 '-v', f'{client_path}:/config.json:ro', IMAGE, 'run', '-c', '/config.json',
             ], text=True).strip()
+            last = None
             for attempt in range(30):
                 result = transfer(1082)
                 if result.returncode == 0 and len(result.stdout) == 65536:
                     break
+                last = result
+                running = subprocess.run(['docker', 'inspect', '--format', '{{.State.Running}}',
+                                          client_container], capture_output=True, text=True)
+                if running.returncode or running.stdout.strip() != 'true':
+                    break
                 time.sleep(.2)
             else:
-                raise RuntimeError('recovery traffic did not flow')
+                result = last
+            if result is None or result.returncode or len(result.stdout) != 65536:
+                server_logs = subprocess.run(['docker', 'logs', '--tail', '20', container],
+                                             capture_output=True, text=True)
+                client_logs = subprocess.run(['docker', 'logs', '--tail', '20', client_container],
+                                             capture_output=True, text=True)
+                raise RuntimeError(
+                    'recovery traffic did not flow: curl=' + (last.stderr.decode(errors='replace')
+                    if last is not None else 'unavailable') +
+                    '\nserver=' + (server_logs.stdout + server_logs.stderr)[-3000:] +
+                    '\nclient=' + (client_logs.stdout + client_logs.stderr)[-3000:])
 
             panel = Panel(os.environ['PANEL_URL'], 'vgb-ci', 'vgb-ci-password')
             for attempt in range(30):
